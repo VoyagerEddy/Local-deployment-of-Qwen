@@ -12,7 +12,7 @@ import MNN.llm as mnn_llm
 
 
 APP_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path(os.environ.get("QWEN25_OMNI_DATA_DIR", r"D:\CodexData\qwen25-omni-voice"))
+DATA_DIR = Path(os.environ.get("QWEN25_OMNI_DATA_DIR", r"D:\QwenData\qwen25-omni-voice"))
 RECORDINGS_DIR = DATA_DIR / "recordings"
 VAD_ASSETS_DIR = DATA_DIR / "vad-assets"
 RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -21,7 +21,7 @@ VAD_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 MODEL_CONFIG = Path(
     os.environ.get(
         "QWEN25_OMNI_MNN_CONFIG",
-        r"D:\CodexModels\Qwen2.5-Omni-3B-MNN\config.json",
+        r"D:\QwenModels\Qwen2.5-Omni-3B-MNN\config.json",
     )
 )
 
