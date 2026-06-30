@@ -1,0 +1,573 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Qwen2.5-Omni-3B Voice</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f4;
+      --panel: #ffffff;
+      --ink: #20231f;
+      --muted: #697064;
+      --line: #d8ddd1;
+      --teal: #136f63;
+      --red: #a83f39;
+      --amber: #b46a1b;
+      --blue: #37628a;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+      letter-spacing: 0;
+    }
+
+    .shell {
+      width: min(1100px, calc(100vw - 32px));
+      margin: 0 auto;
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 14px;
+      padding: 16px 0;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      border-bottom: 1px solid var(--line);
+      padding: 0 0 12px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 650;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--amber);
+    }
+
+    .dot.ready { background: var(--teal); }
+    .dot.busy { background: var(--blue); }
+    .dot.error { background: var(--red); }
+
+    main {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      gap: 16px;
+    }
+
+    .transcript {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      min-height: 420px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .message {
+      max-width: 82%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      line-height: 1.55;
+      font-size: 15px;
+      word-break: break-word;
+      white-space: pre-wrap;
+      border: 1px solid transparent;
+    }
+
+    .message.user {
+      align-self: flex-end;
+      background: #e9f2ef;
+      border-color: #cfe2dc;
+    }
+
+    .message.assistant {
+      align-self: flex-start;
+      background: #fbfbf8;
+      border-color: var(--line);
+    }
+
+    .message.system {
+      align-self: center;
+      max-width: 92%;
+      color: var(--muted);
+      background: transparent;
+      border-color: transparent;
+      font-size: 13px;
+      text-align: center;
+    }
+
+    aside {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+    }
+
+    .panel h2 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .metric {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      padding: 7px 0;
+      border-top: 1px solid #eef0ea;
+    }
+
+    .metric:first-of-type { border-top: 0; }
+    .metric strong { color: var(--ink); font-weight: 600; text-align: right; }
+
+    footer {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: 10px;
+      align-items: center;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      border-radius: 8px;
+      min-height: 42px;
+      padding: 0 14px;
+      font: inherit;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    button:hover:not(:disabled) { border-color: #aeb8a7; }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+
+    .record {
+      min-width: 132px;
+      background: var(--teal);
+      border-color: var(--teal);
+      color: #fff;
+      font-weight: 650;
+    }
+
+    .record.listening {
+      background: var(--blue);
+      border-color: var(--blue);
+    }
+
+    .record.speaking {
+      background: var(--red);
+      border-color: var(--red);
+    }
+
+    .send {
+      min-width: 92px;
+      background: var(--ink);
+      color: #fff;
+      border-color: var(--ink);
+    }
+
+    input {
+      width: 100%;
+      min-height: 42px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0 12px;
+      font: inherit;
+      background: #fff;
+      color: var(--ink);
+    }
+
+    input:focus,
+    button:focus-visible {
+      outline: 2px solid #86b7ac;
+      outline-offset: 2px;
+    }
+
+    .mono {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    @media (max-width: 820px) {
+      .shell { width: min(100vw - 20px, 680px); padding: 10px 0; }
+      main { grid-template-columns: 1fr; }
+      aside { display: none; }
+      footer { grid-template-columns: 1fr; }
+      .record, .send { width: 100%; }
+      .message { max-width: 94%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <h1>Qwen2.5-Omni-3B Voice</h1>
+      <div class="status"><span id="dot" class="dot ready"></span><span id="status">就绪</span></div>
+    </header>
+
+    <main>
+      <section class="transcript" aria-label="conversation">
+        <div id="messages" class="messages"></div>
+      </section>
+
+      <aside>
+        <section class="panel">
+          <h2>运行状态</h2>
+          <div class="metric"><span>模型</span><strong>MNN 4-bit</strong></div>
+          <div class="metric"><span>VAD</span><strong id="vadState">未启动</strong></div>
+          <div class="metric"><span>概率</span><strong id="vadProb">-</strong></div>
+          <div class="metric"><span>上次耗时</span><strong id="elapsed">-</strong></div>
+        </section>
+
+        <section class="panel">
+          <h2>VAD 参数</h2>
+          <div class="metric"><span>frame</span><strong>32ms</strong></div>
+          <div class="metric"><span>speech_start</span><strong>128ms</strong></div>
+          <div class="metric"><span>speech_end</span><strong>420ms</strong></div>
+          <div class="metric"><span>pre_roll</span><strong>200ms</strong></div>
+        </section>
+
+        <section class="panel">
+          <h2>数据目录</h2>
+          <div class="mono">D:\CodexData\qwen25-omni-voice</div>
+        </section>
+      </aside>
+    </main>
+
+    <footer>
+      <button id="recordBtn" class="record" type="button">开始监听</button>
+      <input id="textInput" type="text" autocomplete="off" placeholder="输入文字">
+      <button id="sendBtn" class="send" type="button">发送</button>
+    </footer>
+  </div>
+
+  <script src="/vad-assets/ort.wasm.min.js"></script>
+  <script src="/vad-assets/bundle.min.js"></script>
+  <script>
+    const recordBtn = document.getElementById("recordBtn");
+    const sendBtn = document.getElementById("sendBtn");
+    const textInput = document.getElementById("textInput");
+    const messages = document.getElementById("messages");
+    const statusText = document.getElementById("status");
+    const dot = document.getElementById("dot");
+    const elapsed = document.getElementById("elapsed");
+    const vadState = document.getElementById("vadState");
+    const vadProb = document.getElementById("vadProb");
+
+    const VAD_SAMPLE_RATE = 16000;
+    const VAD_CONFIG = {
+      model: "v5",
+      positiveSpeechThreshold: 0.3,
+      negativeSpeechThreshold: 0.25,
+      minSpeechMs: 128,
+      redemptionMs: 420,
+      preSpeechPadMs: 200,
+      submitUserSpeechOnPause: false,
+      startOnLoad: false,
+      baseAssetPath: "/vad-assets/",
+      onnxWASMBasePath: "/vad-assets/",
+    };
+
+    let busy = false;
+    let autoListening = false;
+    let vadInstance = null;
+
+    function runtimeValue(name) {
+      const root = typeof globalThis !== "undefined" ? globalThis : window;
+      if (root && root[name]) return root[name];
+      if (typeof self !== "undefined" && self[name]) return self[name];
+      if (typeof window !== "undefined" && window[name]) return window[name];
+      try {
+        return Function(`return typeof ${name} !== "undefined" ? ${name} : null`)();
+      } catch (err) {
+        return null;
+      }
+    }
+
+    const ortRuntime = runtimeValue("ort");
+    if (ortRuntime && ortRuntime.env && ortRuntime.env.wasm) {
+      ortRuntime.env.wasm.numThreads = 1;
+      ortRuntime.env.wasm.wasmPaths = "/vad-assets/";
+    }
+
+    function setStatus(text, state = "ready") {
+      statusText.textContent = text;
+      dot.className = `dot ${state}`;
+    }
+
+    function setVadState(text) {
+      vadState.textContent = text;
+    }
+
+    function setBusy(value) {
+      busy = value;
+      sendBtn.disabled = value;
+      textInput.disabled = value;
+      updateRecordButton();
+      if (value) setStatus("处理中", "busy");
+      if (!value && autoListening) setStatus("等待人声", "ready");
+      if (!value && !autoListening) setStatus("就绪", "ready");
+    }
+
+    function updateRecordButton(mode) {
+      recordBtn.classList.remove("listening", "speaking");
+      if (mode === "speaking") {
+        recordBtn.classList.add("speaking");
+        recordBtn.textContent = "说话中";
+        return;
+      }
+      if (autoListening) {
+        recordBtn.classList.add("listening");
+        recordBtn.textContent = busy ? "处理中" : "停止监听";
+      } else {
+        recordBtn.textContent = "开始监听";
+      }
+    }
+
+    function addMessage(role, text) {
+      const node = document.createElement("div");
+      node.className = `message ${role}`;
+      node.textContent = text;
+      messages.appendChild(node);
+      messages.scrollTop = messages.scrollHeight;
+      return node;
+    }
+
+    function speak(text) {
+      if (!("speechSynthesis" in window)) return;
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = /[\u4e00-\u9fff]/.test(text) ? "zh-CN" : "en-US";
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      window.speechSynthesis.speak(utterance);
+    }
+
+    function floatTo16BitPCM(view, offset, input) {
+      for (let i = 0; i < input.length; i += 1, offset += 2) {
+        const sample = Math.max(-1, Math.min(1, input[i]));
+        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+      }
+    }
+
+    function writeString(view, offset, value) {
+      for (let i = 0; i < value.length; i += 1) {
+        view.setUint8(offset + i, value.charCodeAt(i));
+      }
+    }
+
+    function audioToWavBlob(audio, sampleRate = VAD_SAMPLE_RATE) {
+      const buffer = new ArrayBuffer(44 + audio.length * 2);
+      const view = new DataView(buffer);
+      writeString(view, 0, "RIFF");
+      view.setUint32(4, 36 + audio.length * 2, true);
+      writeString(view, 8, "WAVE");
+      writeString(view, 12, "fmt ");
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeString(view, 36, "data");
+      view.setUint32(40, audio.length * 2, true);
+      floatTo16BitPCM(view, 44, audio);
+      return new Blob([view], { type: "audio/wav" });
+    }
+
+    async function sendText() {
+      const text = textInput.value.trim();
+      if (!text || busy) return;
+      addMessage("user", text);
+      textInput.value = "";
+      setBusy(true);
+      try {
+        const res = await fetch("/ask-text", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "request failed");
+        elapsed.textContent = `${data.elapsed}s`;
+        addMessage("assistant", data.reply || "");
+        speak(data.reply || "");
+      } catch (err) {
+        setStatus("出错", "error");
+        addMessage("system", err.message);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function uploadAudio(blob, userNode) {
+      const form = new FormData();
+      form.append("audio", blob, "recording.wav");
+      setBusy(true);
+      try {
+        const res = await fetch("/ask-audio", { method: "POST", body: form });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "request failed");
+        elapsed.textContent = `${data.elapsed}s`;
+        userNode.textContent = data.transcript || "（未识别到语音）";
+        addMessage("assistant", data.reply || "");
+        speak(data.reply || "");
+      } catch (err) {
+        setStatus("出错", "error");
+        userNode.textContent = "（语音转写失败）";
+        addMessage("system", err.message);
+      } finally {
+        setBusy(false);
+        if (autoListening && vadInstance) {
+          await vadInstance.start();
+          setVadState("监听中");
+        }
+      }
+    }
+
+    async function handleSpeechEnd(audio) {
+      if (!autoListening || busy || !audio || audio.length === 0) return;
+      if (vadInstance) await vadInstance.pause();
+      const duration = audio.length / VAD_SAMPLE_RATE;
+      setVadState("已收到");
+      setStatus("转写中", "busy");
+      updateRecordButton();
+      const userNode = addMessage("user", `正在转写... ${duration.toFixed(1)}s`);
+      await uploadAudio(audioToWavBlob(audio), userNode);
+    }
+
+    async function ensureVAD() {
+      if (vadInstance) return vadInstance;
+      const vadRuntime = runtimeValue("vad");
+      if (!vadRuntime || !vadRuntime.MicVAD) {
+        throw new Error("Silero VAD 资产未加载。");
+      }
+      setVadState("加载中");
+      vadInstance = await vadRuntime.MicVAD.new({
+        ...VAD_CONFIG,
+        onSpeechStart: () => {
+          setVadState("检测到人声");
+          setStatus("检测到人声", "busy");
+          updateRecordButton("speaking");
+        },
+        onSpeechRealStart: () => {
+          setVadState("说话中");
+          setStatus("说话中", "busy");
+          updateRecordButton("speaking");
+        },
+        onSpeechEnd: handleSpeechEnd,
+        onVADMisfire: () => {
+          if (!busy && autoListening) {
+            setVadState("监听中");
+            setStatus("等待人声", "ready");
+            updateRecordButton();
+          }
+        },
+        onFrameProcessed: (probabilities) => {
+          const value = probabilities && Number.isFinite(probabilities.isSpeech)
+            ? probabilities.isSpeech
+            : 0;
+          vadProb.textContent = value.toFixed(2);
+        },
+      });
+      return vadInstance;
+    }
+
+    async function startAutoVAD() {
+      if (autoListening || busy) return;
+      try {
+        autoListening = true;
+        updateRecordButton();
+        setStatus("加载 VAD", "busy");
+        const instance = await ensureVAD();
+        await instance.start();
+        setVadState("监听中");
+        setStatus("等待人声", "ready");
+        updateRecordButton();
+      } catch (err) {
+        autoListening = false;
+        setVadState("出错");
+        setStatus("出错", "error");
+        updateRecordButton();
+        addMessage("system", err.message);
+      }
+    }
+
+    async function stopAutoVAD() {
+      autoListening = false;
+      if (vadInstance) await vadInstance.pause();
+      setVadState("已停止");
+      vadProb.textContent = "-";
+      setStatus("就绪", "ready");
+      updateRecordButton();
+    }
+
+    recordBtn.addEventListener("click", async () => {
+      if (autoListening) await stopAutoVAD();
+      else await startAutoVAD();
+    });
+
+    sendBtn.addEventListener("click", sendText);
+    textInput.addEventListener("keydown", event => {
+      if (event.key === "Enter") sendText();
+    });
+
+    addMessage("system", "本地模型已加载。");
+  </script>
+</body>
+</html>
