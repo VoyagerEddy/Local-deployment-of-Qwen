@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Qwen2.5-Omni-3B Voice</title>
+  <title>Qwen Local Chat</title>
   <style>
     :root {
       color-scheme: light;
@@ -52,6 +52,14 @@
       margin: 0;
       font-size: 20px;
       font-weight: 650;
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
     }
 
     .status {
@@ -219,7 +227,8 @@
       border-color: var(--ink);
     }
 
-    input {
+    input,
+    select {
       width: 100%;
       min-height: 42px;
       border: 1px solid var(--line);
@@ -230,7 +239,14 @@
       color: var(--ink);
     }
 
+    select {
+      width: min(360px, 46vw);
+      min-height: 36px;
+      font-size: 13px;
+    }
+
     input:focus,
+    select:focus,
     button:focus-visible {
       outline: 2px solid #86b7ac;
       outline-offset: 2px;
@@ -255,8 +271,11 @@
 <body>
   <div class="shell">
     <header>
-      <h1>Qwen2.5-Omni-3B Voice</h1>
-      <div class="status"><span id="dot" class="dot ready"></span><span id="status">就绪</span></div>
+      <h1>Qwen Local Chat</h1>
+      <div class="header-controls">
+        <select id="modelSelect" aria-label="模型"></select>
+        <div class="status"><span id="dot" class="dot ready"></span><span id="status">就绪</span></div>
+      </div>
     </header>
 
     <main>
@@ -267,7 +286,7 @@
       <aside>
         <section class="panel">
           <h2>运行状态</h2>
-          <div class="metric"><span>模型</span><strong>MNN 4-bit</strong></div>
+          <div class="metric"><span>模型</span><strong id="modelName">Qwen3 GGUF</strong></div>
           <div class="metric"><span>VAD</span><strong id="vadState">未启动</strong></div>
           <div class="metric"><span>概率</span><strong id="vadProb">-</strong></div>
           <div class="metric"><span>上次耗时</span><strong id="elapsed">-</strong></div>
@@ -283,7 +302,7 @@
 
         <section class="panel">
           <h2>数据目录</h2>
-          <div class="mono">D:\QwenData\qwen25-omni-voice</div>
+          <div class="mono">D:\QwenData\qwen-voice</div>
         </section>
       </aside>
     </main>
@@ -301,6 +320,8 @@
     const recordBtn = document.getElementById("recordBtn");
     const sendBtn = document.getElementById("sendBtn");
     const textInput = document.getElementById("textInput");
+    const modelSelect = document.getElementById("modelSelect");
+    const modelName = document.getElementById("modelName");
     const messages = document.getElementById("messages");
     const statusText = document.getElementById("status");
     const dot = document.getElementById("dot");
@@ -325,6 +346,8 @@
     let busy = false;
     let autoListening = false;
     let vadInstance = null;
+    let currentBackend = "qwen3-gguf";
+    let backendInfo = {};
 
     function runtimeValue(name) {
       const root = typeof globalThis !== "undefined" ? globalThis : window;
@@ -361,6 +384,37 @@
       if (value) setStatus("处理中", "busy");
       if (!value && autoListening) setStatus("等待人声", "ready");
       if (!value && !autoListening) setStatus("就绪", "ready");
+    }
+
+    function selectedBackend() {
+      return modelSelect.value || currentBackend;
+    }
+
+    function updateModelUi() {
+      currentBackend = selectedBackend();
+      const info = backendInfo[currentBackend] || {};
+      modelName.textContent = info.name || currentBackend;
+    }
+
+    async function loadModelOptions() {
+      try {
+        const res = await fetch("/models");
+        const data = await res.json();
+        backendInfo = {};
+        modelSelect.innerHTML = "";
+        for (const backend of data.backends || []) {
+          backendInfo[backend.id] = backend;
+          const option = document.createElement("option");
+          option.value = backend.id;
+          option.textContent = backend.name;
+          modelSelect.appendChild(option);
+        }
+        modelSelect.value = data.default_backend || "qwen3-gguf";
+        updateModelUi();
+      } catch (err) {
+        modelSelect.innerHTML = '<option value="qwen3-gguf">Qwen3-Omni-30B-A3B-Instruct GGUF</option>';
+        updateModelUi();
+      }
     }
 
     function updateRecordButton(mode) {
@@ -440,7 +494,7 @@
         const res = await fetch("/ask-text", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify({ text, backend: selectedBackend() }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "request failed");
@@ -458,6 +512,7 @@
     async function uploadAudio(blob, userNode) {
       const form = new FormData();
       form.append("audio", blob, "recording.wav");
+      form.append("backend", selectedBackend());
       setBusy(true);
       try {
         const res = await fetch("/ask-audio", { method: "POST", body: form });
@@ -562,12 +617,14 @@
       else await startAutoVAD();
     });
 
+    modelSelect.addEventListener("change", updateModelUi);
     sendBtn.addEventListener("click", sendText);
     textInput.addEventListener("keydown", event => {
       if (event.key === "Enter") sendText();
     });
 
-    addMessage("system", "本地模型已加载。");
+    loadModelOptions();
+    addMessage("system", "默认使用 Qwen3-Omni-30B-A3B-Instruct GGUF。请先启动 llama.cpp/Ollama 后端。");
   </script>
 </body>
 </html>

@@ -1,18 +1,20 @@
 import os
 import re
+import json
+import base64
 import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
-import MNN.llm as mnn_llm
-
 
 APP_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path(os.environ.get("QWEN25_OMNI_DATA_DIR", r"D:\QwenData\qwen25-omni-voice"))
+DATA_DIR = Path(os.environ.get("QWEN_VOICE_DATA_DIR", r"D:\QwenData\qwen-voice"))
 RECORDINGS_DIR = DATA_DIR / "recordings"
 VAD_ASSETS_DIR = DATA_DIR / "vad-assets"
 RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -26,6 +28,15 @@ MODEL_CONFIG = Path(
 )
 
 FFMPEG = os.environ.get("FFMPEG", "ffmpeg")
+DEFAULT_BACKEND = os.environ.get("QWEN_VOICE_DEFAULT_BACKEND", "qwen3-gguf")
+QWEN3_GGUF_BASE_URL = os.environ.get("QWEN3_GGUF_BASE_URL", "http://127.0.0.1:8080/v1").rstrip("/")
+QWEN3_GGUF_MODEL = os.environ.get(
+    "QWEN3_GGUF_MODEL",
+    "qwen3-omni-30b-a3b-instruct-q4km",
+)
+QWEN3_GGUF_CONTEXT = int(os.environ.get("QWEN3_GGUF_CONTEXT", "2048"))
+QWEN3_GGUF_GPU_LAYERS = int(os.environ.get("QWEN3_GGUF_GPU_LAYERS", "8"))
+REQUEST_TIMEOUT_SECONDS = float(os.environ.get("QWEN3_GGUF_TIMEOUT", "600"))
 CHAT_SYSTEM_PROMPT = (
     "You are Qwen, a helpful assistant developed by the Qwen Team, Alibaba Group."
 )
@@ -68,9 +79,24 @@ INTERNAL_PROMPT_MARKERS = (
 )
 
 app = Flask(__name__)
-model_lock = threading.Lock()
-model = None
-model_loaded_at = None
+mnn_model_lock = threading.Lock()
+mnn_model = None
+mnn_model_loaded_at = None
+
+BACKENDS = {
+    "qwen3-gguf": {
+        "id": "qwen3-gguf",
+        "name": "Qwen3-Omni-30B-A3B-Instruct GGUF",
+        "detail": "llama.cpp/Ollama Q4_K_M, ctx 2048, ngl 8",
+        "audio": True,
+    },
+    "qwen25-mnn": {
+        "id": "qwen25-mnn",
+        "name": "Qwen2.5-Omni-3B MNN",
+        "detail": "local MNN 4-bit",
+        "audio": True,
+    },
+}
 
 
 def cjk_score(text: str) -> int:
@@ -137,13 +163,21 @@ def looks_like_assistant_answer(text: str) -> bool:
     return any(marker in normalized for marker in assistant_markers)
 
 
-def load_model():
-    global model, model_loaded_at
-    if model is not None:
-        return model
+def normalize_backend(backend_id: str | None) -> str:
+    if backend_id in BACKENDS:
+        return backend_id
+    return DEFAULT_BACKEND if DEFAULT_BACKEND in BACKENDS else "qwen3-gguf"
+
+
+def load_mnn_model():
+    global mnn_model, mnn_model_loaded_at
+    if mnn_model is not None:
+        return mnn_model
 
     if not MODEL_CONFIG.exists():
         raise FileNotFoundError(f"Model config not found: {MODEL_CONFIG}")
+
+    import MNN.llm as mnn_llm
 
     started = time.time()
     qwen = mnn_llm.create(str(MODEL_CONFIG))
@@ -160,9 +194,9 @@ def load_model():
     except Exception:
         pass
 
-    model = qwen
-    model_loaded_at = time.time() - started
-    return model
+    mnn_model = qwen
+    mnn_model_loaded_at = time.time() - started
+    return mnn_model
 
 
 def convert_to_wav(source: Path, target: Path):
@@ -205,15 +239,15 @@ def configure_model(qwen, system_prompt: str, max_new_tokens: int, temperature: 
         pass
 
 
-def ask_model(
+def ask_mnn_model(
     prompt: str,
     reset: bool = True,
     system_prompt: str = CHAT_SYSTEM_PROMPT,
     max_new_tokens: int = 180,
     temperature: float = 0.6,
 ) -> str:
-    qwen = load_model()
-    with model_lock:
+    qwen = load_mnn_model()
+    with mnn_model_lock:
         if reset:
             qwen.reset()
         configure_model(qwen, system_prompt, max_new_tokens, temperature)
@@ -223,10 +257,115 @@ def ask_model(
     return repair_text(response).strip()
 
 
+def openai_chat_completion(
+    messages: list[dict],
+    max_new_tokens: int = 180,
+    temperature: float = 0.6,
+) -> str:
+    payload = {
+        "model": QWEN3_GGUF_MODEL,
+        "messages": messages,
+        "max_tokens": max_new_tokens,
+        "temperature": temperature,
+    }
+    request = urllib.request.Request(
+        f"{QWEN3_GGUF_BASE_URL}/chat/completions",
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except TimeoutError as exc:
+        raise RuntimeError("Qwen3 GGUF 响应超时；30B Q4_K_M 首次加载会很慢。") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(
+            "Qwen3 GGUF 服务未连接。请先启动 llama.cpp 或 Ollama 后端："
+            " llama.cpp 默认 http://127.0.0.1:8080/v1，"
+            "Ollama 默认 http://127.0.0.1:11434/v1。"
+        ) from exc
+
+    try:
+        return data["choices"][0]["message"]["content"].strip()
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"Qwen3 GGUF 返回格式异常: {data}") from exc
+
+
+def ask_qwen3_gguf(prompt: str, max_new_tokens: int = 180, temperature: float = 0.6) -> str:
+    return repair_text(
+        openai_chat_completion(
+            [
+                {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+        )
+    )
+
+
+def parse_audio_json(text: str) -> tuple[str, str]:
+    cleaned = repair_text(text).strip()
+    cleaned = re.sub(r"^```(?:json)?|```$", "", cleaned, flags=re.IGNORECASE).strip()
+    try:
+        data = json.loads(cleaned)
+        transcript = str(data.get("transcript") or "").strip()
+        reply = str(data.get("reply") or "").strip()
+        if transcript or reply:
+            return transcript or "（Qwen3 未返回独立转写）", reply or cleaned
+    except json.JSONDecodeError:
+        pass
+
+    transcript_match = re.search(r"转写[:：]\s*(.+)", cleaned)
+    reply_match = re.search(r"回答[:：]\s*(.+)", cleaned)
+    if transcript_match or reply_match:
+        transcript = transcript_match.group(1).strip() if transcript_match else "（Qwen3 未返回独立转写）"
+        reply = reply_match.group(1).strip() if reply_match else cleaned
+        return transcript, reply
+
+    return "（Qwen3 未返回独立转写）", cleaned
+
+
+def ask_qwen3_audio(audio_path: Path, instruction: str) -> tuple[str, str]:
+    audio_b64 = base64.b64encode(audio_path.read_bytes()).decode("ascii")
+    prompt = (
+        f"{instruction}\n\n"
+        "请先逐字转写音频中用户真正说的话，再直接回答用户。"
+        "只输出 JSON，不要 Markdown，不要解释。格式："
+        '{"transcript":"用户原话","reply":"你的回答"}'
+    )
+    response = openai_chat_completion(
+        [
+            {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_audio",
+                        "input_audio": {"data": audio_b64, "format": "wav"},
+                    },
+                    {"type": "text", "text": prompt},
+                ],
+            },
+        ],
+        max_new_tokens=256,
+        temperature=0.2,
+    )
+    return parse_audio_json(response)
+
+
+def ask_backend(prompt: str, backend_id: str) -> str:
+    backend = normalize_backend(backend_id)
+    if backend == "qwen3-gguf":
+        return ask_qwen3_gguf(prompt)
+    return ask_mnn_model(prompt)
+
+
 def transcribe_audio(audio_path: str) -> str:
     transcript_prompt = f"<audio>{audio_path}</audio>{TRANSCRIBE_PROMPT}"
     transcript = clean_transcript(
-        ask_model(
+        ask_mnn_model(
             transcript_prompt,
             system_prompt=ASR_SYSTEM_PROMPT,
             max_new_tokens=48,
@@ -236,7 +375,7 @@ def transcribe_audio(audio_path: str) -> str:
     if looks_like_assistant_answer(transcript):
         retry_prompt = f"<audio>{audio_path}</audio>{TRANSCRIBE_RETRY_PROMPT}"
         transcript = clean_transcript(
-            ask_model(
+            ask_mnn_model(
                 retry_prompt,
                 system_prompt=ASR_SYSTEM_PROMPT,
                 max_new_tokens=48,
@@ -278,16 +417,38 @@ def vad_assets(filename):
     return send_from_directory(VAD_ASSETS_DIR, filename, mimetype=mimetype)
 
 
+@app.get("/models")
+def models():
+    return jsonify(
+        {
+            "default_backend": normalize_backend(DEFAULT_BACKEND),
+            "backends": list(BACKENDS.values()),
+            "qwen3": {
+                "base_url": QWEN3_GGUF_BASE_URL,
+                "model": QWEN3_GGUF_MODEL,
+                "context": QWEN3_GGUF_CONTEXT,
+                "gpu_layers": QWEN3_GGUF_GPU_LAYERS,
+            },
+        }
+    )
+
+
 @app.get("/health")
 def health():
     return jsonify(
         {
             "ok": True,
+            "default_backend": normalize_backend(DEFAULT_BACKEND),
+            "backends": list(BACKENDS.values()),
+            "qwen3_base_url": QWEN3_GGUF_BASE_URL,
+            "qwen3_model": QWEN3_GGUF_MODEL,
+            "qwen3_context": QWEN3_GGUF_CONTEXT,
+            "qwen3_gpu_layers": QWEN3_GGUF_GPU_LAYERS,
             "model_config": str(MODEL_CONFIG),
             "data_dir": str(DATA_DIR),
             "vad_assets_dir": str(VAD_ASSETS_DIR),
-            "model_loaded": model is not None,
-            "load_seconds": model_loaded_at,
+            "mnn_model_loaded": mnn_model is not None,
+            "mnn_load_seconds": mnn_model_loaded_at,
         }
     )
 
@@ -296,12 +457,22 @@ def health():
 def ask_text():
     data = request.get_json(force=True) or {}
     text = (data.get("text") or "").strip()
+    backend = normalize_backend(data.get("backend"))
     if not text:
         return jsonify({"error": "empty text"}), 400
 
     started = time.time()
-    reply = ask_model(text)
-    return jsonify({"reply": reply, "elapsed": round(time.time() - started, 2)})
+    try:
+        reply = ask_backend(text, backend)
+    except Exception as exc:
+        return jsonify({"error": str(exc), "backend": backend}), 500
+    return jsonify(
+        {
+            "reply": reply,
+            "backend": backend,
+            "elapsed": round(time.time() - started, 2),
+        }
+    )
 
 
 @app.post("/ask-audio")
@@ -310,6 +481,7 @@ def ask_audio():
     if upload is None:
         return jsonify({"error": "missing audio file"}), 400
 
+    backend = normalize_backend(request.form.get("backend"))
     instruction = (request.form.get("instruction") or DEFAULT_AUDIO_PROMPT).strip()
     request_id = uuid.uuid4().hex
     source = RECORDINGS_DIR / f"{request_id}{upload_suffix(upload.filename)}"
@@ -319,14 +491,17 @@ def ask_audio():
     started = time.time()
     try:
         convert_to_wav(source, wav)
-        audio_path = wav.as_posix()
-        transcript = transcribe_audio(audio_path)
-        reply_prompt = (
-            f"{instruction}\n\n"
-            f"\u7528\u6237\u8bed\u97f3\u8f6c\u5199\u5982\u4e0b\uff1a{transcript}\n\n"
-            "\u8bf7\u76f4\u63a5\u56de\u7b54\u7528\u6237\uff0c\u4e0d\u8981\u590d\u8ff0\u201c\u7528\u6237\u8bed\u97f3\u8f6c\u5199\u5982\u4e0b\u201d\u3002"
-        )
-        reply = ask_model(reply_prompt)
+        if backend == "qwen3-gguf":
+            transcript, reply = ask_qwen3_audio(wav, instruction)
+        else:
+            audio_path = wav.as_posix()
+            transcript = transcribe_audio(audio_path)
+            reply_prompt = (
+                f"{instruction}\n\n"
+                f"\u7528\u6237\u8bed\u97f3\u8f6c\u5199\u5982\u4e0b\uff1a{transcript}\n\n"
+                "\u8bf7\u76f4\u63a5\u56de\u7b54\u7528\u6237\uff0c\u4e0d\u8981\u590d\u8ff0\u201c\u7528\u6237\u8bed\u97f3\u8f6c\u5199\u5982\u4e0b\u201d\u3002"
+            )
+            reply = ask_mnn_model(reply_prompt)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
     finally:
@@ -337,6 +512,7 @@ def ask_audio():
         {
             "transcript": transcript,
             "reply": reply,
+            "backend": backend,
             "elapsed": round(time.time() - started, 2),
         }
     )
@@ -344,5 +520,4 @@ def ask_audio():
 
 if __name__ == "__main__":
     os.environ.setdefault("PYTHONUTF8", "1")
-    load_model()
     app.run(host="127.0.0.1", port=7860, threaded=True)
