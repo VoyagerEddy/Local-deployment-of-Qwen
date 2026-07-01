@@ -34,20 +34,77 @@ The script starts:
 ```text
 ggml-org/Qwen3-Omni-30B-A3B-Instruct-GGUF:Q4_K_M
 API model name: qwen3-omni-30b-a3b-instruct-q4km
-context: 2048
-gpu layers: 8
+context: 768
+gpu layers: auto
 server: http://127.0.0.1:8080/v1
 ```
 
-Q4_K_M is about 18.6 GB, so it cannot fit entirely in 6 GB VRAM. Keep most weights on CPU/RAM and tune GPU offload with:
+Q4_K_M is about 18.6 GB, so it cannot fit entirely in 6 GB VRAM. The launcher defaults to automatic GPU offload:
 
 ```powershell
-$env:QWEN3_GGUF_GPU_LAYERS = "4"   # safer
-$env:QWEN3_GGUF_GPU_LAYERS = "8"   # default
-$env:QWEN3_GGUF_GPU_LAYERS = "12"  # try if VRAM allows
+$env:QWEN3_GGUF_GPU_LAYERS = "auto"
 ```
 
-If you see OOM, lower `QWEN3_GGUF_GPU_LAYERS`. Keep `QWEN3_GGUF_CONTEXT=2048` because KV cache also consumes VRAM and RAM.
+In `auto` mode it tries higher GPU offload first and falls back if llama.cpp fails to start or if free VRAM is below the safety margin. The default candidate list is:
+
+```text
+999,96,80,64,48,40,36,32,30,28,26,24,20,18,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0
+```
+
+Useful overrides:
+
+```powershell
+$env:QWEN3_GGUF_GPU_LAYER_CANDIDATES = "999,96,80,64,48,40,36,32,30,28,26,24"
+$env:QWEN3_GGUF_MIN_FREE_VRAM_MB = "768"
+$env:QWEN3_GGUF_GPU_LAYERS = "8"  # fixed mode, no automatic fallback
+```
+
+KV cache quantization is enabled by default to reduce VRAM pressure:
+
+```powershell
+$env:QWEN3_GGUF_CACHE_TYPE_K = "q8_0"
+$env:QWEN3_GGUF_CACHE_TYPE_V = "q8_0"
+```
+
+Flash Attention is enabled by default for the llama.cpp backend:
+
+```powershell
+$env:QWEN3_GGUF_FLASH_ATTN = "on"
+```
+
+The launcher also uses RAM-safe defaults to reduce Windows paging:
+
+```powershell
+$env:QWEN3_GGUF_MLOCK = "off"                 # optional; on can overpressure 16 GB RAM
+$env:QWEN3_GGUF_PARALLEL = "1"                # single local user, fewer KV/cache slots
+$env:QWEN3_GGUF_CONTEXT = "768"               # short realtime turns, smaller KV cache
+$env:QWEN3_GGUF_BATCH_SIZE = "256"            # lower prompt-processing RAM spikes
+$env:QWEN3_GGUF_UBATCH_SIZE = "64"
+$env:QWEN3_GGUF_PROMPT_CACHE = "off"
+$env:QWEN3_GGUF_PROMPT_CACHE_RAM_MB = "0"     # disable llama.cpp's RAM prompt cache
+$env:QWEN3_GGUF_CTX_CHECKPOINTS = "0"
+$env:QWEN3_GGUF_MIN_FREE_RAM_BEFORE_LAUNCH_MB = "4096"
+$env:QWEN3_GGUF_MIN_FREE_RAM_MB = "1024"
+$env:QWEN3_GGUF_MIN_REQUEST_RAM_MB = "1024"   # soft guard
+$env:QWEN3_GGUF_HARD_MIN_REQUEST_RAM_MB = "512"
+$env:QWEN3_GGUF_MAX_PAGE_READS_PER_SEC = "120"
+$env:QWEN3_GGUF_MAX_PAGE_WRITES_PER_SEC = "80"
+$env:QWEN3_GGUF_TRIM_WORKING_SET = "on"       # trim llama-server after heavy turns
+$env:QWEN3_GGUF_TRIM_BELOW_RAM_MB = "1536"
+$env:QWEN3_GGUF_MAX_TEXT_TOKENS = "96"
+$env:QWEN3_GGUF_MAX_AUDIO_TOKENS = "96"
+```
+
+If the physical-RAM guard fails, close other applications or lower the context before starting Qwen3. The request-time guard is softer: after the first audio request, low Available RAM is allowed if Windows is not actively reading/writing the page file. When Available RAM drops below `QWEN3_GGUF_TRIM_BELOW_RAM_MB`, the Flask app asks Windows to trim `llama-server`'s working set after the request completes. Lowering the hard guard lets the model run longer, but Windows may start using `pagefile.sys`, which is much slower. `QWEN3_GGUF_MLOCK=on` is available as an experiment, but on a 16 GB RAM machine it can increase memory pressure during load.
+
+For a more aggressive experiment, try `q4_0`, but quality may drop:
+
+```powershell
+$env:QWEN3_GGUF_CACHE_TYPE_K = "q4_0"
+$env:QWEN3_GGUF_CACHE_TYPE_V = "q4_0"
+```
+
+The selected runtime settings are written to `D:\QwenTemp\qwen3-llamacpp-state.json`.
 
 Ollama route:
 
