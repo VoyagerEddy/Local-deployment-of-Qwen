@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$env:OLLAMA_MODELS = "D:\QwenModels\ollama"
+$env:OLLAMA_MODELS = Join-Path $PSScriptRoot "QwenModels\ollama"
 New-Item -ItemType Directory -Force $env:OLLAMA_MODELS | Out-Null
 
 if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) {

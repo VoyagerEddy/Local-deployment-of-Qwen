@@ -8,6 +8,11 @@ __pycache__/
 .venv/
 venv/
 
+/QwenData/
+/QwenEnvs/
+/QwenModels/
+/QwenTemp/
+
 logs/
 recordings/
 *.wav

@@ -10,7 +10,7 @@ $projectDir = $PSScriptRoot
 $webUrl = "http://127.0.0.1:7860/"
 $webHealthUrl = "http://127.0.0.1:7860/health"
 $backendHealthUrl = "http://127.0.0.1:8080/v1/models"
-$logDir = "D:\QwenTemp"
+$logDir = Join-Path $projectDir "QwenTemp"
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 
 $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")

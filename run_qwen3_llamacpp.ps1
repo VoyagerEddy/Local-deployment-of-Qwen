@@ -1,8 +1,10 @@
 $ErrorActionPreference = "Stop"
 
-$env:HF_HOME = "D:\QwenModels\hf_cache"
-$env:TEMP = "D:\QwenTemp"
-$env:TMP = "D:\QwenTemp"
+$modelsRoot = Join-Path $PSScriptRoot "QwenModels"
+$tempRoot = Join-Path $PSScriptRoot "QwenTemp"
+$env:HF_HOME = Join-Path $modelsRoot "hf_cache"
+$env:TEMP = $tempRoot
+$env:TMP = $tempRoot
 New-Item -ItemType Directory -Force $env:HF_HOME, $env:TEMP | Out-Null
 
 $apiModel = $env:QWEN3_GGUF_MODEL
@@ -64,7 +66,7 @@ if (-not $port) { $port = "8080" }
 
 $modelDir = $env:QWEN3_GGUF_MODEL_DIR
 if (-not $modelDir) {
-    $modelDir = "D:\QwenModels\Qwen3-Omni-30B-A3B-Instruct-GGUF"
+    $modelDir = Join-Path $modelsRoot "Qwen3-Omni-30B-A3B-Instruct-GGUF"
 }
 
 $localModel = Join-Path $modelDir "Qwen3-Omni-30B-A3B-Instruct-Q4_K_M.gguf"
@@ -240,11 +242,11 @@ if (-not $minFreeVramMb) { $minFreeVramMb = "768" }
 $minFreeVramMb = [int]$minFreeVramMb
 
 $logDir = $env:QWEN3_GGUF_LOG_DIR
-if (-not $logDir) { $logDir = "D:\QwenTemp" }
+if (-not $logDir) { $logDir = $tempRoot }
 New-Item -ItemType Directory -Force $logDir | Out-Null
 
 $stateFile = $env:QWEN3_LLAMA_STATE_FILE
-if (-not $stateFile) { $stateFile = "D:\QwenTemp\qwen3-llamacpp-state.json" }
+if (-not $stateFile) { $stateFile = Join-Path $tempRoot "qwen3-llamacpp-state.json" }
 Remove-Item -LiteralPath $stateFile -Force -ErrorAction SilentlyContinue
 
 $isAutoGpuLayers = "$nglSetting".Trim().ToLowerInvariant() -eq "auto"

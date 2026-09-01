@@ -4,27 +4,28 @@ This app defaults to `Qwen3-Omni-30B-A3B-Instruct` through GGUF quantization and
 
 ## Paths
 
-- Python environment: `D:\QwenEnvs\qwen25omni`
-- Qwen3 GGUF and cache: `D:\QwenModels`
-- Qwen3 local files: `D:\QwenModels\Qwen3-Omni-30B-A3B-Instruct-GGUF`
-- Runtime data and temporary recordings: `D:\QwenData\qwen-voice`
-- Browser VAD assets: `D:\QwenData\qwen-voice\vad-assets`
-- App: `D:\QwenData\github-sync\Local-deployment-of-Qwen`
+- Python environment: `D:\download\Qwen\_local\QwenEnvs\qwen25omni`
+- Qwen3 GGUF and cache: `D:\download\Qwen\_local\QwenModels`
+- Qwen3 local files: `D:\download\Qwen\_local\QwenModels\Qwen3-Omni-30B-A3B-Instruct-GGUF`
+- Runtime data and temporary recordings: `D:\download\Qwen\_local\QwenData\qwen-voice`
+- Browser VAD assets: `D:\download\Qwen\_local\QwenData\qwen-voice\vad-assets`
+- Temporary files and logs: `D:\download\Qwen\_local\QwenTemp`
+- App: `D:\download\Qwen\_local`
 
 ## Qwen3 GGUF Backend
 
 Recommended route for realtime voice is llama.cpp with multimodal support:
 
 ```powershell
-cd D:\QwenData\github-sync\Local-deployment-of-Qwen
+cd D:\download\Qwen\_local
 .\run_qwen3_llamacpp.ps1
 ```
 
 The script prefers local files when they exist:
 
 ```text
-D:\QwenModels\Qwen3-Omni-30B-A3B-Instruct-GGUF\Qwen3-Omni-30B-A3B-Instruct-Q4_K_M.gguf
-D:\QwenModels\Qwen3-Omni-30B-A3B-Instruct-GGUF\mmproj-Qwen3-Omni-30B-A3B-Instruct-Q8_0.gguf
+D:\download\Qwen\_local\QwenModels\Qwen3-Omni-30B-A3B-Instruct-GGUF\Qwen3-Omni-30B-A3B-Instruct-Q4_K_M.gguf
+D:\download\Qwen\_local\QwenModels\Qwen3-Omni-30B-A3B-Instruct-GGUF\mmproj-Qwen3-Omni-30B-A3B-Instruct-Q8_0.gguf
 ```
 
 If `Qwen3-Omni-30B-A3B-Instruct-Q4_K_M.gguf.aria2` still exists, the download is not finished yet.
@@ -104,12 +105,12 @@ $env:QWEN3_GGUF_CACHE_TYPE_K = "q4_0"
 $env:QWEN3_GGUF_CACHE_TYPE_V = "q4_0"
 ```
 
-The selected runtime settings are written to `D:\QwenTemp\qwen3-llamacpp-state.json`.
+The selected runtime settings are written to `D:\download\Qwen\_local\QwenTemp\qwen3-llamacpp-state.json`.
 
 Ollama route:
 
 ```powershell
-cd D:\QwenData\github-sync\Local-deployment-of-Qwen
+cd D:\download\Qwen\_local
 .\run_qwen3_ollama.ps1
 ```
 
@@ -141,7 +142,7 @@ $env:QWEN_VOICE_BROWSER_SHUTDOWN_GRACE_SECONDS = "8"
 Start the web app in another terminal:
 
 ```powershell
-cd D:\QwenData\github-sync\Local-deployment-of-Qwen
+cd D:\download\Qwen\_local
 .\run_voice_chat.ps1
 ```
 

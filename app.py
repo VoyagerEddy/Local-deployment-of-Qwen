@@ -17,7 +17,7 @@ from flask import Flask, Response, jsonify, render_template, request, send_from_
 
 
 APP_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path(os.environ.get("QWEN_VOICE_DATA_DIR", r"D:\QwenData\qwen-voice"))
+DATA_DIR = Path(os.environ.get("QWEN_VOICE_DATA_DIR", str(APP_DIR / "QwenData" / "qwen-voice")))
 RECORDINGS_DIR = DATA_DIR / "recordings"
 VAD_ASSETS_DIR = DATA_DIR / "vad-assets"
 RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -26,7 +26,7 @@ VAD_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 MODEL_CONFIG = Path(
     os.environ.get(
         "QWEN25_OMNI_MNN_CONFIG",
-        r"D:\QwenModels\Qwen2.5-Omni-3B-MNN\config.json",
+        str(APP_DIR / "QwenModels" / "Qwen2.5-Omni-3B-MNN" / "config.json"),
     )
 )
 
@@ -66,7 +66,7 @@ QWEN3_GGUF_TRIM_BELOW_RAM_MB = int(os.environ.get("QWEN3_GGUF_TRIM_BELOW_RAM_MB"
 QWEN3_GGUF_MAX_TEXT_TOKENS = int(os.environ.get("QWEN3_GGUF_MAX_TEXT_TOKENS", "96"))
 QWEN3_GGUF_MAX_AUDIO_TOKENS = int(os.environ.get("QWEN3_GGUF_MAX_AUDIO_TOKENS", "96"))
 QWEN3_LLAMA_STATE_FILE = Path(
-    os.environ.get("QWEN3_LLAMA_STATE_FILE", r"D:\QwenTemp\qwen3-llamacpp-state.json")
+    os.environ.get("QWEN3_LLAMA_STATE_FILE", str(APP_DIR / "QwenTemp" / "qwen3-llamacpp-state.json"))
 )
 REQUEST_TIMEOUT_SECONDS = float(os.environ.get("QWEN3_GGUF_TIMEOUT", "600"))
 BROWSER_STOP_ON_CLOSE = os.environ.get("QWEN_VOICE_STOP_ON_BROWSER_CLOSE", "on").strip().lower() in {
@@ -794,7 +794,7 @@ def upload_suffix(filename: str) -> str:
 
 @app.get("/")
 def index():
-    return render_template("index.html", model_config=str(MODEL_CONFIG))
+    return render_template("index.html", model_config=str(MODEL_CONFIG), data_dir=str(DATA_DIR))
 
 
 @app.post("/runtime/client/open")
