@@ -33,6 +33,9 @@ $env:QWEN3_GGUF_MAX_TEXT_TOKENS = "96"
 $env:QWEN3_GGUF_MAX_AUDIO_TOKENS = "96"
 $env:QWEN3_LLAMA_STATE_FILE = "D:\QwenTemp\qwen3-llamacpp-state.json"
 $env:QWEN25_OMNI_MNN_CONFIG = "D:\QwenModels\Qwen2.5-Omni-3B-MNN\config.json"
+$env:QWEN_VOICE_STOP_ON_BROWSER_CLOSE = "on"
+$env:QWEN_VOICE_BROWSER_HEARTBEAT_TIMEOUT_SECONDS = "45"
+$env:QWEN_VOICE_BROWSER_SHUTDOWN_GRACE_SECONDS = "8"
 
 New-Item -ItemType Directory -Force $env:TEMP, $env:QWEN_VOICE_DATA_DIR | Out-Null
 

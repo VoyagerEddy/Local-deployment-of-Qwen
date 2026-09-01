@@ -117,6 +117,27 @@ Ollama compatibility for audio input depends on its current multimodal support. 
 
 ## App
 
+### Desktop shortcut (recommended)
+
+Create the desktop shortcut once:
+
+```powershell
+cd D:\download\Qwen\_local
+.\install_shortcut.ps1
+```
+
+Double-click `Qwen 本地多模态` on the desktop. The launcher starts the llama.cpp backend and Flask app in hidden processes, waits until both are ready, and opens `http://127.0.0.1:7860` in the default browser. Reopening the shortcut while the project is already running only opens the page; it does not start duplicate services.
+
+The page sends a local heartbeat to Flask. When all Qwen pages are closed, the app waits 8 seconds (so a refresh does not stop it), then stops both Flask and the Qwen llama.cpp backend. If the browser exits unexpectedly without sending a close notification, the missed-heartbeat fallback also shuts them down.
+
+Relevant controls:
+
+```powershell
+$env:QWEN_VOICE_STOP_ON_BROWSER_CLOSE = "on"
+$env:QWEN_VOICE_BROWSER_HEARTBEAT_TIMEOUT_SECONDS = "45"
+$env:QWEN_VOICE_BROWSER_SHUTDOWN_GRACE_SECONDS = "8"
+```
+
 Start the web app in another terminal:
 
 ```powershell

@@ -348,6 +348,61 @@
     let vadInstance = null;
     let currentBackend = "qwen3-gguf";
     let backendInfo = {};
+    const runtimeClientId = typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `qwen-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    let runtimeEventSource = null;
+    let runtimeHeartbeatTimer = null;
+    let runtimeClientRegistered = false;
+
+    function runtimeClientPayload() {
+      return JSON.stringify({ client_id: runtimeClientId });
+    }
+
+    function startRuntimeHeartbeat() {
+      if (runtimeClientRegistered) return;
+      runtimeClientRegistered = true;
+      fetch("/runtime/client/open", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: runtimeClientPayload(),
+        keepalive: true,
+      }).catch(() => {});
+      runtimeEventSource = new EventSource(`/runtime/client/events/${runtimeClientId}`);
+      runtimeHeartbeatTimer = window.setInterval(() => {
+        fetch("/runtime/client/heartbeat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: runtimeClientPayload(),
+          keepalive: true,
+        }).catch(() => {});
+      }, 5000);
+    }
+
+    function stopRuntimeHeartbeat() {
+      if (!runtimeClientRegistered) return;
+      runtimeClientRegistered = false;
+      if (runtimeHeartbeatTimer !== null) {
+        window.clearInterval(runtimeHeartbeatTimer);
+        runtimeHeartbeatTimer = null;
+      }
+      if (runtimeEventSource !== null) {
+        runtimeEventSource.close();
+        runtimeEventSource = null;
+      }
+      const payload = new Blob([runtimeClientPayload()], { type: "application/json" });
+      if (!(navigator.sendBeacon && navigator.sendBeacon("/runtime/client/close", payload))) {
+        fetch("/runtime/client/close", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: runtimeClientPayload(),
+          keepalive: true,
+        }).catch(() => {});
+      }
+    }
+
+    window.addEventListener("pageshow", startRuntimeHeartbeat);
+    window.addEventListener("pagehide", stopRuntimeHeartbeat);
 
     function runtimeValue(name) {
       const root = typeof globalThis !== "undefined" ? globalThis : window;
@@ -625,6 +680,7 @@
 
     loadModelOptions();
     addMessage("system", "默认使用 Qwen3-Omni-30B-A3B-Instruct GGUF。请先启动 llama.cpp/Ollama 后端。");
+    addMessage("system", "关闭本页面后，本地模型和网页服务会自动停止；刷新页面不会中断运行。");
   </script>
 </body>
 </html>

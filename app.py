@@ -4,6 +4,7 @@ import json
 import base64
 import ctypes
 import http.client
+import signal
 import subprocess
 import threading
 import time
@@ -12,7 +13,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, Response, jsonify, render_template, request, send_from_directory
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -68,6 +69,19 @@ QWEN3_LLAMA_STATE_FILE = Path(
     os.environ.get("QWEN3_LLAMA_STATE_FILE", r"D:\QwenTemp\qwen3-llamacpp-state.json")
 )
 REQUEST_TIMEOUT_SECONDS = float(os.environ.get("QWEN3_GGUF_TIMEOUT", "600"))
+BROWSER_STOP_ON_CLOSE = os.environ.get("QWEN_VOICE_STOP_ON_BROWSER_CLOSE", "on").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+    "enabled",
+}
+BROWSER_HEARTBEAT_TIMEOUT_SECONDS = float(
+    os.environ.get("QWEN_VOICE_BROWSER_HEARTBEAT_TIMEOUT_SECONDS", "45")
+)
+BROWSER_SHUTDOWN_GRACE_SECONDS = float(
+    os.environ.get("QWEN_VOICE_BROWSER_SHUTDOWN_GRACE_SECONDS", "8")
+)
 CHAT_SYSTEM_PROMPT = (
     "You are Qwen, a helpful assistant developed by the Qwen Team, Alibaba Group."
 )
@@ -113,6 +127,11 @@ app = Flask(__name__)
 mnn_model_lock = threading.Lock()
 mnn_model = None
 mnn_model_loaded_at = None
+browser_clients_lock = threading.Lock()
+browser_clients: dict[str, float] = {}
+browser_client_seen = False
+browser_empty_since: float | None = None
+runtime_shutdown_started = False
 
 BACKENDS = {
     "qwen3-gguf": {
@@ -356,6 +375,113 @@ def clear_qwen3_state() -> None:
         QWEN3_LLAMA_STATE_FILE.unlink(missing_ok=True)
     except OSError:
         pass
+
+
+def stop_qwen3_backend() -> None:
+    state = read_llama_state() or {}
+    try:
+        process_id = int(state.get("process_id") or 0)
+    except (TypeError, ValueError):
+        process_id = 0
+
+    if process_id > 0 and process_id != os.getpid():
+        try:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/PID", str(process_id), "/T", "/F"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=15,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            else:
+                os.kill(process_id, signal.SIGTERM)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    clear_qwen3_state()
+
+
+def shutdown_local_runtime(reason: str) -> None:
+    global runtime_shutdown_started
+    with browser_clients_lock:
+        if runtime_shutdown_started:
+            return
+        runtime_shutdown_started = True
+
+    print(f"Stopping Qwen local runtime: {reason}", flush=True)
+    stop_qwen3_backend()
+    time.sleep(0.5)
+    os._exit(0)
+
+
+def request_runtime_shutdown(reason: str) -> None:
+    threading.Thread(
+        target=shutdown_local_runtime,
+        args=(reason,),
+        name="qwen-runtime-shutdown",
+        daemon=True,
+    ).start()
+
+
+def valid_browser_client_id(value: object) -> str | None:
+    client_id = str(value or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", client_id):
+        return None
+    return client_id
+
+
+def browser_client_id() -> str | None:
+    data = request.get_json(silent=True) or {}
+    return valid_browser_client_id(data.get("client_id"))
+
+
+def mark_browser_client_active(client_id: str) -> int:
+    global browser_client_seen, browser_empty_since
+    with browser_clients_lock:
+        browser_clients[client_id] = time.monotonic()
+        browser_client_seen = True
+        browser_empty_since = None
+        return len(browser_clients)
+
+
+def mark_browser_client_closed(client_id: str) -> int:
+    global browser_empty_since
+    with browser_clients_lock:
+        browser_clients.pop(client_id, None)
+        if not browser_clients:
+            browser_empty_since = time.monotonic()
+        return len(browser_clients)
+
+
+def browser_client_monitor() -> None:
+    global browser_empty_since
+    while True:
+        time.sleep(2)
+        if not BROWSER_STOP_ON_CLOSE:
+            continue
+
+        now = time.monotonic()
+        with browser_clients_lock:
+            expired = [
+                client_id
+                for client_id, last_seen in browser_clients.items()
+                if now - last_seen > BROWSER_HEARTBEAT_TIMEOUT_SECONDS
+            ]
+            for client_id in expired:
+                browser_clients.pop(client_id, None)
+
+            if browser_clients:
+                browser_empty_since = None
+                should_stop = False
+            elif browser_client_seen:
+                if browser_empty_since is None:
+                    browser_empty_since = now
+                should_stop = now - browser_empty_since >= BROWSER_SHUTDOWN_GRACE_SECONDS
+            else:
+                should_stop = False
+
+        if should_stop:
+            shutdown_local_runtime("all browser pages were closed")
 
 
 def is_connection_reset(exc: BaseException) -> bool:
@@ -671,6 +797,53 @@ def index():
     return render_template("index.html", model_config=str(MODEL_CONFIG))
 
 
+@app.post("/runtime/client/open")
+@app.post("/runtime/client/heartbeat")
+def browser_client_active():
+    client_id = browser_client_id()
+    if client_id is None:
+        return jsonify({"error": "invalid client_id"}), 400
+
+    client_count = mark_browser_client_active(client_id)
+    return jsonify({"ok": True, "clients": client_count})
+
+
+@app.post("/runtime/client/close")
+def browser_client_closed():
+    client_id = browser_client_id()
+    if client_id is None:
+        return jsonify({"error": "invalid client_id"}), 400
+
+    client_count = mark_browser_client_closed(client_id)
+    return jsonify({"ok": True, "clients": client_count})
+
+
+@app.get("/runtime/client/events/<client_id>")
+def browser_client_events(client_id):
+    client_id = valid_browser_client_id(client_id)
+    if client_id is None:
+        return jsonify({"error": "invalid client_id"}), 400
+
+    mark_browser_client_active(client_id)
+
+    def event_stream():
+        try:
+            while not runtime_shutdown_started:
+                mark_browser_client_active(client_id)
+                yield ": qwen-runtime-alive\n\n"
+                time.sleep(3)
+        except (GeneratorExit, OSError):
+            pass
+        finally:
+            mark_browser_client_closed(client_id)
+
+    return Response(
+        event_stream(),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.get("/vad-assets/<path:filename>")
 def vad_assets(filename):
     mimetype = None
@@ -769,6 +942,9 @@ def health():
             "vad_assets_dir": str(VAD_ASSETS_DIR),
             "mnn_model_loaded": mnn_model is not None,
             "mnn_load_seconds": mnn_model_loaded_at,
+            "stop_on_browser_close": BROWSER_STOP_ON_CLOSE,
+            "browser_client_count": len(browser_clients),
+            "browser_shutdown_grace_seconds": BROWSER_SHUTDOWN_GRACE_SECONDS,
         }
     )
 
@@ -840,4 +1016,9 @@ def ask_audio():
 
 if __name__ == "__main__":
     os.environ.setdefault("PYTHONUTF8", "1")
+    threading.Thread(
+        target=browser_client_monitor,
+        name="qwen-browser-monitor",
+        daemon=True,
+    ).start()
     app.run(host="127.0.0.1", port=7860, threaded=True)
