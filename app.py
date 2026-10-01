@@ -9,11 +9,16 @@ import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
+from functools import wraps
 from pathlib import Path
 
 from flask import Flask, Response, jsonify, render_template, request, send_from_directory
+from werkzeug.exceptions import RequestEntityTooLarge
+
+from qwen_tts import QwenTTS, TTSError
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -124,6 +129,12 @@ INTERNAL_PROMPT_MARKERS = (
 )
 
 app = Flask(__name__)
+tts_service = QwenTTS(
+    APP_DIR, DATA_DIR,
+    available_ram=lambda: get_available_ram_mb(),
+    prepare_memory=lambda minimum: trim_qwen3_working_set(minimum_available_mb=minimum),
+)
+model_request_lock = threading.Lock()
 mnn_model_lock = threading.Lock()
 mnn_model = None
 mnn_model_loaded_at = None
@@ -409,6 +420,7 @@ def shutdown_local_runtime(reason: str) -> None:
         runtime_shutdown_started = True
 
     print(f"Stopping Qwen local runtime: {reason}", flush=True)
+    tts_service.shutdown()
     stop_qwen3_backend()
     time.sleep(0.5)
     os._exit(0)
@@ -585,20 +597,50 @@ def get_memory_pressure_summary(include_perf: bool = False) -> dict:
     return summary
 
 
-def trim_qwen3_working_set() -> bool:
+def local_llama_process_id() -> int | None:
+    # Resolve the current listener instead of trusting a potentially stale PID.
+    target = urllib.parse.urlparse(QWEN3_GGUF_BASE_URL)
+    if os.name != "nt" or target.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        return None
+    try:
+        port = target.port or (443 if target.scheme == "https" else 80)
+        script = (
+            "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);"
+            f"$listener=Get-NetTCPConnection -State Listen -LocalPort {port} -ErrorAction SilentlyContinue | Select-Object -First 1;"
+            "if ($listener) {"
+            "$processInfo=Get-CimInstance Win32_Process -Filter ('ProcessId='+$listener.OwningProcess);"
+            "$processInfo | Select-Object ProcessId,Name,CommandLine | ConvertTo-Json -Compress }"
+        )
+        completed = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", script],
+            capture_output=True, encoding="utf-8", timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        info = json.loads(completed.stdout)
+        if (
+            isinstance(info, dict)
+            and str(info.get("Name") or "").lower() in {"llama.exe", "llama-server.exe"}
+            and QWEN3_GGUF_MODEL in str(info.get("CommandLine", ""))
+        ):
+            return int(info["ProcessId"])
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError, ValueError, TypeError):
+        pass
+    return None
+
+
+def trim_qwen3_working_set(minimum_available_mb: int | None = None) -> bool:
     if os.name != "nt" or not is_enabled(QWEN3_GGUF_TRIM_WORKING_SET):
         return False
 
     available_mb = get_available_ram_mb()
     if (
         available_mb is None
-        or QWEN3_GGUF_TRIM_BELOW_RAM_MB <= 0
-        or available_mb >= QWEN3_GGUF_TRIM_BELOW_RAM_MB
+        or (minimum_available_mb if minimum_available_mb is not None else QWEN3_GGUF_TRIM_BELOW_RAM_MB) <= 0
+        or available_mb >= (minimum_available_mb if minimum_available_mb is not None else QWEN3_GGUF_TRIM_BELOW_RAM_MB)
     ):
         return False
 
-    state = read_llama_state() or {}
-    process_id = state.get("process_id")
+    process_id = local_llama_process_id()
     if not process_id:
         return False
 
@@ -949,7 +991,47 @@ def health():
     )
 
 
+def serialized_model_request(view):
+    @wraps(view)
+    def guarded(*args, **kwargs):
+        if not model_request_lock.acquire(blocking=False):
+            data = {"error": "本地模型正在处理其他请求，请稍后重试。"}
+            if request.path == "/tts":
+                data["engine"] = "qwen3-tts"
+            return jsonify(data), 429
+        try:
+            return view(*args, **kwargs)
+        finally:
+            model_request_lock.release()
+    return guarded
+
+
+@app.get("/tts/status")
+def tts_status():
+    return jsonify(tts_service.status())
+
+
+@app.post("/tts")
+@serialized_model_request
+def synthesize_speech():
+    request.max_content_length = 32769
+    try:
+        if len(request.get_data(cache=True)) > 32768:
+            raise RequestEntityTooLarge()
+        data = request.get_json(silent=True)
+    except RequestEntityTooLarge:
+        return jsonify({"error": "TTS 请求过大。", "engine": "qwen3-tts"}), 413
+    if not isinstance(data, dict):
+        return jsonify({"error": "TTS 请求必须是 JSON 对象。", "engine": "qwen3-tts"}), 400
+    try:
+        audio = tts_service.synthesize(data.get("text"), data.get("language"))
+    except TTSError as exc:
+        return jsonify({"error": str(exc), "engine": "qwen3-tts"}), exc.status_code
+    return Response(audio, mimetype="audio/wav", headers={"Cache-Control": "no-store"})
+
+
 @app.post("/ask-text")
+@serialized_model_request
 def ask_text():
     data = request.get_json(force=True) or {}
     text = (data.get("text") or "").strip()
@@ -972,6 +1054,7 @@ def ask_text():
 
 
 @app.post("/ask-audio")
+@serialized_model_request
 def ask_audio():
     upload = request.files.get("audio")
     if upload is None:

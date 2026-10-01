@@ -62,6 +62,26 @@
       flex-wrap: wrap;
     }
 
+    .selector-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .voice-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    #ttsSelect { width: 185px; }
+    #ttsStatus { max-width: 260px; font-size: 12px; color: var(--muted); }
+    #ttsStatus.error { color: var(--red); }
+    [hidden] { display: none !important; }
+
     .status {
       display: inline-flex;
       align-items: center;
@@ -273,7 +293,17 @@
     <header>
       <h1>Qwen Local Chat</h1>
       <div class="header-controls">
-        <select id="modelSelect" aria-label="模型"></select>
+        <label class="selector-label">推理模型<select id="modelSelect" aria-label="推理模型"></select></label>
+        <div class="voice-controls">
+          <label class="selector-label">声音输出
+            <select id="ttsSelect" aria-label="声音输出">
+              <option value="web">Web TTS</option>
+              <option value="qwen3-tts">Qwen3-TTS（Chelsie）</option>
+            </select>
+          </label>
+          <span id="ttsStatus" aria-live="polite">浏览器 / 系统语音</span>
+        </div>
+        <button id="stopSpeechBtn" type="button" hidden>停止播报</button>
         <div class="status"><span id="dot" class="dot ready"></span><span id="status">就绪</span></div>
       </div>
     </header>
@@ -321,6 +351,9 @@
     const sendBtn = document.getElementById("sendBtn");
     const textInput = document.getElementById("textInput");
     const modelSelect = document.getElementById("modelSelect");
+    const ttsSelect = document.getElementById("ttsSelect");
+    const ttsStatus = document.getElementById("ttsStatus");
+    const stopSpeechBtn = document.getElementById("stopSpeechBtn");
     const modelName = document.getElementById("modelName");
     const messages = document.getElementById("messages");
     const statusText = document.getElementById("status");
@@ -348,6 +381,10 @@
     let vadInstance = null;
     let currentBackend = "qwen3-gguf";
     let backendInfo = {};
+    let speechEpoch = 0;
+    let activeSpeech = null;
+    let ttsStatusController = null;
+    const TTS_STORAGE_KEY = "qwen-local-tts";
     const runtimeClientId = typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
       : `qwen-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -403,6 +440,10 @@
 
     window.addEventListener("pageshow", startRuntimeHeartbeat);
     window.addEventListener("pagehide", stopRuntimeHeartbeat);
+    window.addEventListener("pagehide", () => {
+      stopSpeech();
+      if (ttsStatusController) ttsStatusController.abort();
+    });
 
     function runtimeValue(name) {
       const root = typeof globalThis !== "undefined" ? globalThis : window;
@@ -481,10 +522,11 @@
       }
       if (autoListening) {
         recordBtn.classList.add("listening");
-        recordBtn.textContent = busy ? "处理中" : "停止监听";
+        recordBtn.textContent = "停止监听";
       } else {
         recordBtn.textContent = "开始监听";
       }
+      recordBtn.disabled = busy && !autoListening;
     }
 
     function addMessage(role, text) {
@@ -496,14 +538,169 @@
       return node;
     }
 
-    function speak(text) {
-      if (!("speechSynthesis" in window)) return;
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = /[\u4e00-\u9fff]/.test(text) ? "zh-CN" : "en-US";
-      utterance.rate = 1;
-      utterance.pitch = 1;
-      window.speechSynthesis.speak(utterance);
+    function speechAborted() {
+      return new DOMException("已停止播报", "AbortError");
+    }
+
+    function disposeSpeech(session) {
+      if (session.utterance) {
+        session.utterance.onend = null;
+        session.utterance.onerror = null;
+      }
+      if (session.audio) {
+        session.audio.onended = null;
+        session.audio.onerror = null;
+        session.audio.pause();
+        session.audio.removeAttribute("src");
+        session.audio.load();
+      }
+      if (session.url) URL.revokeObjectURL(session.url);
+      session.url = null;
+    }
+
+    function stopSpeech() {
+      speechEpoch += 1;
+      const session = activeSpeech;
+      activeSpeech = null;
+      if (session) {
+        session.controller.abort();
+        disposeSpeech(session);
+      }
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+      stopSpeechBtn.hidden = true;
+    }
+
+    async function getChelsieStatus(signal) {
+      const res = await fetch("/tts/status", { signal });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "无法读取语音服务状态");
+      if (data.voice !== "Chelsie" || data.voice_mode !== "reference-clone" || (data.ready && data.speaker_reference !== true)) {
+        throw new Error("语音服务尚未启用 Chelsie，请重启项目");
+      }
+      return data;
+    }
+
+    async function refreshTtsStatus() {
+      if (ttsStatusController) ttsStatusController.abort();
+      ttsStatus.className = "";
+      ttsStatus.title = "";
+      if (ttsSelect.value === "web") {
+        ttsStatus.textContent = "浏览器 / 系统语音";
+        return;
+      }
+      const controller = new AbortController();
+      ttsStatusController = controller;
+      ttsStatus.textContent = "检查 Qwen3-TTS…";
+      try {
+        const data = await getChelsieStatus(controller.signal);
+        if (controller.signal.aborted || ttsSelect.value !== "qwen3-tts") return;
+        const voice = data.voice;
+        ttsStatus.textContent = data.ready ? (data.busy ? `${voice} 合成中` : `${voice} 已就绪`) : "Qwen3-TTS 未就绪，请先运行 setup_qwen3_tts.ps1";
+        ttsStatus.className = data.ready ? "" : "error";
+        ttsStatus.title = data.error || `${voice} 参考音色 · ${data.model || "Qwen3-TTS"}`;
+      } catch (err) {
+        if (!controller.signal.aborted && ttsSelect.value === "qwen3-tts" && err.name !== "AbortError") {
+          ttsStatus.textContent = err.message;
+          ttsStatus.className = "error";
+          ttsStatus.title = err.message;
+        }
+      }
+    }
+
+    async function pauseListening() {
+      if (autoListening && vadInstance) {
+        await vadInstance.pause();
+        setVadState("暂停监听");
+      }
+    }
+
+    async function finishInteraction(errorMessage) {
+      if (autoListening && vadInstance) {
+        try {
+          await vadInstance.start();
+          if (autoListening) setVadState("监听中");
+          else await vadInstance.pause();
+        } catch (err) {
+          autoListening = false;
+          updateRecordButton();
+          setVadState("出错");
+          errorMessage = `恢复监听失败：${err.message}`;
+          addMessage("system", errorMessage);
+        }
+      }
+      setBusy(false);
+      if (errorMessage) setStatus(errorMessage, "error");
+    }
+
+    async function speak(text, expectedEpoch) {
+      if (!text || expectedEpoch !== speechEpoch) return;
+      const engine = ttsSelect.value;
+      const language = /[\u4e00-\u9fff]/.test(text) ? "zh" : "en";
+      const session = { controller: new AbortController(), audio: null, url: null, utterance: null };
+      activeSpeech = session;
+      stopSpeechBtn.hidden = false;
+      try {
+        await pauseListening();
+        if (session.controller.signal.aborted) throw speechAborted();
+        if (engine === "qwen3-tts") {
+          const status = await getChelsieStatus(session.controller.signal);
+          if (!status.ready) throw new Error(status.error || "Chelsie 参考音色未就绪，请运行 setup_qwen3_tts.ps1");
+          if (session.controller.signal.aborted) throw speechAborted();
+          setStatus("Qwen3-TTS 合成中", "busy");
+          const res = await fetch("/tts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text, language }),
+            signal: session.controller.signal,
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data.error || `Qwen3-TTS 请求失败（${res.status}）`);
+          }
+          const blob = await res.blob();
+          if (session.controller.signal.aborted) throw speechAborted();
+          if (!blob.size || !res.headers.get("Content-Type")?.toLowerCase().startsWith("audio/")) {
+            throw new Error("Qwen3-TTS 未返回有效音频");
+          }
+          session.url = URL.createObjectURL(blob);
+          session.audio = new Audio(session.url);
+        } else {
+          if (!("speechSynthesis" in window)) throw new Error("此浏览器不支持 Web TTS，请选择 Qwen3-TTS");
+          window.speechSynthesis.cancel();
+          session.utterance = new SpeechSynthesisUtterance(text);
+          session.utterance.lang = language === "zh" ? "zh-CN" : "en-US";
+          session.utterance.rate = 1;
+          session.utterance.pitch = 1;
+        }
+        setStatus(engine === "qwen3-tts" ? "Qwen3-TTS 播放中" : "Web TTS 播放中", "busy");
+        await new Promise((resolve, reject) => {
+          const signal = session.controller.signal;
+          const settle = (error) => {
+            signal.removeEventListener("abort", onAbort);
+            if (error) reject(error);
+            else resolve();
+          };
+          const onAbort = () => settle(speechAborted());
+          signal.addEventListener("abort", onAbort, { once: true });
+          if (signal.aborted) { onAbort(); return; }
+          if (session.audio) {
+            session.audio.onended = () => settle();
+            session.audio.onerror = () => settle(new Error("音频播放失败，请检查浏览器的音频播放权限"));
+            session.audio.play().catch(err => settle(new Error(`音频播放失败：${err.message}`)));
+          } else {
+            session.utterance.onend = () => settle();
+            session.utterance.onerror = event => settle(new Error(`Web TTS 播报失败：${event.error || "未知错误"}`));
+            window.speechSynthesis.speak(session.utterance);
+          }
+        });
+      } finally {
+        disposeSpeech(session);
+        if (activeSpeech === session) {
+          activeSpeech = null;
+          stopSpeechBtn.hidden = true;
+        }
+        if (engine === "qwen3-tts") refreshTtsStatus();
+      }
     }
 
     function floatTo16BitPCM(view, offset, input) {
@@ -545,7 +742,11 @@
       addMessage("user", text);
       textInput.value = "";
       setBusy(true);
+      const expectedEpoch = speechEpoch;
+      let replyReceived = false;
+      let errorMessage = "";
       try {
+        await pauseListening();
         const res = await fetch("/ask-text", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -555,12 +756,15 @@
         if (!res.ok) throw new Error(data.error || "request failed");
         elapsed.textContent = `${data.elapsed}s`;
         addMessage("assistant", data.reply || "");
-        speak(data.reply || "");
+        replyReceived = true;
+        await speak(data.reply || "", expectedEpoch);
       } catch (err) {
-        setStatus("出错", "error");
-        addMessage("system", err.message);
+        if (err.name !== "AbortError") {
+          errorMessage = replyReceived ? "语音输出失败" : "请求失败";
+          addMessage("system", `${errorMessage}：${err.message}`);
+        }
       } finally {
-        setBusy(false);
+        await finishInteraction(errorMessage);
       }
     }
 
@@ -569,24 +773,27 @@
       form.append("audio", blob, "recording.wav");
       form.append("backend", selectedBackend());
       setBusy(true);
+      const expectedEpoch = speechEpoch;
+      let replyReceived = false;
+      let errorMessage = "";
       try {
+        await pauseListening();
         const res = await fetch("/ask-audio", { method: "POST", body: form });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "request failed");
         elapsed.textContent = `${data.elapsed}s`;
         userNode.textContent = data.transcript || "（未识别到语音）";
         addMessage("assistant", data.reply || "");
-        speak(data.reply || "");
+        replyReceived = true;
+        await speak(data.reply || "", expectedEpoch);
       } catch (err) {
-        setStatus("出错", "error");
-        userNode.textContent = "（语音转写失败）";
-        addMessage("system", err.message);
-      } finally {
-        setBusy(false);
-        if (autoListening && vadInstance) {
-          await vadInstance.start();
-          setVadState("监听中");
+        if (err.name !== "AbortError") {
+          errorMessage = replyReceived ? "语音输出失败" : "语音请求失败";
+          if (!replyReceived) userNode.textContent = "（语音转写失败）";
+          addMessage("system", `${errorMessage}：${err.message}`);
         }
+      } finally {
+        await finishInteraction(errorMessage);
       }
     }
 
@@ -660,10 +867,11 @@
 
     async function stopAutoVAD() {
       autoListening = false;
+      stopSpeech();
       if (vadInstance) await vadInstance.pause();
       setVadState("已停止");
       vadProb.textContent = "-";
-      setStatus("就绪", "ready");
+      if (!busy) setStatus("就绪", "ready");
       updateRecordButton();
     }
 
@@ -673,11 +881,22 @@
     });
 
     modelSelect.addEventListener("change", updateModelUi);
+    ttsSelect.addEventListener("change", () => {
+      stopSpeech();
+      try { localStorage.setItem(TTS_STORAGE_KEY, ttsSelect.value); } catch (err) {}
+      refreshTtsStatus();
+    });
+    stopSpeechBtn.addEventListener("click", stopSpeech);
     sendBtn.addEventListener("click", sendText);
     textInput.addEventListener("keydown", event => {
       if (event.key === "Enter") sendText();
     });
 
+    try {
+      const savedTts = localStorage.getItem(TTS_STORAGE_KEY);
+      if (savedTts === "web" || savedTts === "qwen3-tts") ttsSelect.value = savedTts;
+    } catch (err) {}
+    refreshTtsStatus();
     loadModelOptions();
     addMessage("system", "默认使用 Qwen3-Omni-30B-A3B-Instruct GGUF。请先启动 llama.cpp/Ollama 后端。");
     addMessage("system", "关闭本页面后，本地模型和网页服务会自动停止；刷新页面不会中断运行。");
