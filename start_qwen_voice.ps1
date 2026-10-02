@@ -9,14 +9,19 @@ $ProgressPreference = "SilentlyContinue"
 $projectDir = $PSScriptRoot
 $webUrl = "http://127.0.0.1:7860/"
 $webHealthUrl = "http://127.0.0.1:7860/health"
-$backendHealthUrl = "http://127.0.0.1:8080/v1/models"
+$defaults = Get-Content -LiteralPath (Join-Path $projectDir "runtime_defaults.json") -Raw | ConvertFrom-Json
+$backendPort = if ($env:QWEN3_GGUF_PORT) { [int]$env:QWEN3_GGUF_PORT } else { [int]$defaults.QWEN3_GGUF_PORT }
+$backendBaseUrl = if ($env:QWEN3_GGUF_BASE_URL) { $env:QWEN3_GGUF_BASE_URL.TrimEnd('/') } else { "http://127.0.0.1:$backendPort/v1" }
+$backendHealthUrl = "$backendBaseUrl/models"
 $logDir = Join-Path $projectDir "QwenTemp"
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 
 $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 $env:PATH = "$machinePath;$userPath"
-$env:QWEN3_GGUF_GPU_LAYER_CANDIDATES = "13,12,11,10,9,8,7,6,5,4,3,2,1,0"
+if (-not $env:QWEN3_GGUF_GPU_LAYER_CANDIDATES) {
+    $env:QWEN3_GGUF_GPU_LAYER_CANDIDATES = "13,12,11,10,9,8,7,6,5,4,3,2,1,0"
+}
 
 New-Item -ItemType Directory -Force $logDir | Out-Null
 
@@ -60,7 +65,7 @@ function Wait-HttpEndpoint {
 }
 
 try {
-    if (-not (Test-LocalPort -Port 8080)) {
+    if (-not (Test-LocalPort -Port $backendPort)) {
         Start-HiddenScript -ScriptPath (Join-Path $projectDir "run_qwen3_llamacpp.ps1") -LogName "qwen-backend"
     }
 

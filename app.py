@@ -22,6 +22,10 @@ from qwen_tts import QwenTTS, TTSError
 
 
 APP_DIR = Path(__file__).resolve().parent
+RUNTIME_SETTINGS = {
+    name: os.environ.get(name) or default
+    for name, default in json.loads((APP_DIR / "runtime_defaults.json").read_text(encoding="utf-8")).items()
+}
 DATA_DIR = Path(os.environ.get("QWEN_VOICE_DATA_DIR", str(APP_DIR / "QwenData" / "qwen-voice")))
 RECORDINGS_DIR = DATA_DIR / "recordings"
 VAD_ASSETS_DIR = DATA_DIR / "vad-assets"
@@ -36,45 +40,39 @@ MODEL_CONFIG = Path(
 )
 
 FFMPEG = os.environ.get("FFMPEG", "ffmpeg")
-DEFAULT_BACKEND = os.environ.get("QWEN_VOICE_DEFAULT_BACKEND", "qwen3-gguf")
-QWEN3_GGUF_BASE_URL = os.environ.get("QWEN3_GGUF_BASE_URL", "http://127.0.0.1:8080/v1").rstrip("/")
-QWEN3_GGUF_MODEL = os.environ.get(
-    "QWEN3_GGUF_MODEL",
-    "qwen3-omni-30b-a3b-instruct-q4km",
-)
-QWEN3_GGUF_CONTEXT = int(os.environ.get("QWEN3_GGUF_CONTEXT", "768"))
-QWEN3_GGUF_GPU_LAYERS = os.environ.get("QWEN3_GGUF_GPU_LAYERS", "auto")
-QWEN3_GGUF_MIN_FREE_VRAM_MB = os.environ.get("QWEN3_GGUF_MIN_FREE_VRAM_MB", "768")
-QWEN3_GGUF_CACHE_TYPE_K = os.environ.get("QWEN3_GGUF_CACHE_TYPE_K", "q8_0")
-QWEN3_GGUF_CACHE_TYPE_V = os.environ.get("QWEN3_GGUF_CACHE_TYPE_V", "q8_0")
-QWEN3_GGUF_FLASH_ATTN = os.environ.get("QWEN3_GGUF_FLASH_ATTN", "on")
-QWEN3_GGUF_MLOCK = os.environ.get("QWEN3_GGUF_MLOCK", "off")
-QWEN3_GGUF_PARALLEL = os.environ.get("QWEN3_GGUF_PARALLEL", "1")
-QWEN3_GGUF_BATCH_SIZE = os.environ.get("QWEN3_GGUF_BATCH_SIZE", "256")
-QWEN3_GGUF_UBATCH_SIZE = os.environ.get("QWEN3_GGUF_UBATCH_SIZE", "64")
-QWEN3_GGUF_PROMPT_CACHE = os.environ.get("QWEN3_GGUF_PROMPT_CACHE", "off")
-QWEN3_GGUF_PROMPT_CACHE_RAM_MB = os.environ.get("QWEN3_GGUF_PROMPT_CACHE_RAM_MB", "0")
-QWEN3_GGUF_CTX_CHECKPOINTS = os.environ.get("QWEN3_GGUF_CTX_CHECKPOINTS", "0")
-QWEN3_GGUF_MIN_FREE_RAM_MB = os.environ.get("QWEN3_GGUF_MIN_FREE_RAM_MB", "1024")
-QWEN3_GGUF_MIN_REQUEST_RAM_MB = int(os.environ.get("QWEN3_GGUF_MIN_REQUEST_RAM_MB", "1024"))
-QWEN3_GGUF_HARD_MIN_REQUEST_RAM_MB = int(
-    os.environ.get("QWEN3_GGUF_HARD_MIN_REQUEST_RAM_MB", "512")
-)
-QWEN3_GGUF_MAX_PAGE_READS_PER_SEC = int(
-    os.environ.get("QWEN3_GGUF_MAX_PAGE_READS_PER_SEC", "120")
-)
-QWEN3_GGUF_MAX_PAGE_WRITES_PER_SEC = int(
-    os.environ.get("QWEN3_GGUF_MAX_PAGE_WRITES_PER_SEC", "80")
-)
-QWEN3_GGUF_TRIM_WORKING_SET = os.environ.get("QWEN3_GGUF_TRIM_WORKING_SET", "on")
-QWEN3_GGUF_TRIM_BELOW_RAM_MB = int(os.environ.get("QWEN3_GGUF_TRIM_BELOW_RAM_MB", "1536"))
-QWEN3_GGUF_MAX_TEXT_TOKENS = int(os.environ.get("QWEN3_GGUF_MAX_TEXT_TOKENS", "96"))
-QWEN3_GGUF_MAX_AUDIO_TOKENS = int(os.environ.get("QWEN3_GGUF_MAX_AUDIO_TOKENS", "96"))
+DEFAULT_BACKEND = RUNTIME_SETTINGS["QWEN_VOICE_DEFAULT_BACKEND"]
+QWEN3_GGUF_BASE_URL = (
+    os.environ.get("QWEN3_GGUF_BASE_URL")
+    or f"http://127.0.0.1:{RUNTIME_SETTINGS['QWEN3_GGUF_PORT']}/v1"
+).rstrip("/")
+QWEN3_GGUF_MODEL = RUNTIME_SETTINGS["QWEN3_GGUF_MODEL"]
+QWEN3_GGUF_CONTEXT = int(RUNTIME_SETTINGS["QWEN3_GGUF_CONTEXT"])
+QWEN3_GGUF_GPU_LAYERS = RUNTIME_SETTINGS["QWEN3_GGUF_GPU_LAYERS"]
+QWEN3_GGUF_MIN_FREE_VRAM_MB = RUNTIME_SETTINGS["QWEN3_GGUF_MIN_FREE_VRAM_MB"]
+QWEN3_GGUF_CACHE_TYPE_K = RUNTIME_SETTINGS["QWEN3_GGUF_CACHE_TYPE_K"]
+QWEN3_GGUF_CACHE_TYPE_V = RUNTIME_SETTINGS["QWEN3_GGUF_CACHE_TYPE_V"]
+QWEN3_GGUF_FLASH_ATTN = RUNTIME_SETTINGS["QWEN3_GGUF_FLASH_ATTN"]
+QWEN3_GGUF_MLOCK = RUNTIME_SETTINGS["QWEN3_GGUF_MLOCK"]
+QWEN3_GGUF_PARALLEL = RUNTIME_SETTINGS["QWEN3_GGUF_PARALLEL"]
+QWEN3_GGUF_BATCH_SIZE = RUNTIME_SETTINGS["QWEN3_GGUF_BATCH_SIZE"]
+QWEN3_GGUF_UBATCH_SIZE = RUNTIME_SETTINGS["QWEN3_GGUF_UBATCH_SIZE"]
+QWEN3_GGUF_PROMPT_CACHE = RUNTIME_SETTINGS["QWEN3_GGUF_PROMPT_CACHE"]
+QWEN3_GGUF_PROMPT_CACHE_RAM_MB = RUNTIME_SETTINGS["QWEN3_GGUF_PROMPT_CACHE_RAM_MB"]
+QWEN3_GGUF_CTX_CHECKPOINTS = RUNTIME_SETTINGS["QWEN3_GGUF_CTX_CHECKPOINTS"]
+QWEN3_GGUF_MIN_FREE_RAM_MB = RUNTIME_SETTINGS["QWEN3_GGUF_MIN_FREE_RAM_MB"]
+QWEN3_GGUF_MIN_REQUEST_RAM_MB = int(RUNTIME_SETTINGS["QWEN3_GGUF_MIN_REQUEST_RAM_MB"])
+QWEN3_GGUF_HARD_MIN_REQUEST_RAM_MB = int(RUNTIME_SETTINGS["QWEN3_GGUF_HARD_MIN_REQUEST_RAM_MB"])
+QWEN3_GGUF_MAX_PAGE_READS_PER_SEC = int(RUNTIME_SETTINGS["QWEN3_GGUF_MAX_PAGE_READS_PER_SEC"])
+QWEN3_GGUF_MAX_PAGE_WRITES_PER_SEC = int(RUNTIME_SETTINGS["QWEN3_GGUF_MAX_PAGE_WRITES_PER_SEC"])
+QWEN3_GGUF_TRIM_WORKING_SET = RUNTIME_SETTINGS["QWEN3_GGUF_TRIM_WORKING_SET"]
+QWEN3_GGUF_TRIM_BELOW_RAM_MB = int(RUNTIME_SETTINGS["QWEN3_GGUF_TRIM_BELOW_RAM_MB"])
+QWEN3_GGUF_MAX_TEXT_TOKENS = int(RUNTIME_SETTINGS["QWEN3_GGUF_MAX_TEXT_TOKENS"])
+QWEN3_GGUF_MAX_AUDIO_TOKENS = int(RUNTIME_SETTINGS["QWEN3_GGUF_MAX_AUDIO_TOKENS"])
 QWEN3_LLAMA_STATE_FILE = Path(
     os.environ.get("QWEN3_LLAMA_STATE_FILE", str(APP_DIR / "QwenTemp" / "qwen3-llamacpp-state.json"))
 )
-REQUEST_TIMEOUT_SECONDS = float(os.environ.get("QWEN3_GGUF_TIMEOUT", "600"))
-BROWSER_STOP_ON_CLOSE = os.environ.get("QWEN_VOICE_STOP_ON_BROWSER_CLOSE", "on").strip().lower() in {
+REQUEST_TIMEOUT_SECONDS = float(RUNTIME_SETTINGS["QWEN3_GGUF_TIMEOUT"])
+BROWSER_STOP_ON_CLOSE = RUNTIME_SETTINGS["QWEN_VOICE_STOP_ON_BROWSER_CLOSE"].strip().lower() in {
     "1",
     "true",
     "yes",
@@ -82,10 +80,10 @@ BROWSER_STOP_ON_CLOSE = os.environ.get("QWEN_VOICE_STOP_ON_BROWSER_CLOSE", "on")
     "enabled",
 }
 BROWSER_HEARTBEAT_TIMEOUT_SECONDS = float(
-    os.environ.get("QWEN_VOICE_BROWSER_HEARTBEAT_TIMEOUT_SECONDS", "45")
+    RUNTIME_SETTINGS["QWEN_VOICE_BROWSER_HEARTBEAT_TIMEOUT_SECONDS"]
 )
 BROWSER_SHUTDOWN_GRACE_SECONDS = float(
-    os.environ.get("QWEN_VOICE_BROWSER_SHUTDOWN_GRACE_SECONDS", "8")
+    RUNTIME_SETTINGS["QWEN_VOICE_BROWSER_SHUTDOWN_GRACE_SECONDS"]
 )
 CHAT_SYSTEM_PROMPT = (
     "You are Qwen, a helpful assistant developed by the Qwen Team, Alibaba Group."
@@ -104,28 +102,6 @@ TRANSCRIBE_PROMPT = (
 )
 TRANSCRIBE_RETRY_PROMPT = (
     "Transcribe the audio verbatim. Output spoken words only."
-)
-INTERNAL_PROMPT_MARKERS = (
-    "\u4f60\u73b0\u5728\u53ea\u80fd\u6267\u884c",
-    "ASR \u8bed\u97f3\u8bc6\u522b\u4efb\u52a1",
-    "\u8bf7\u9010\u5b57\u8f6c\u5199",
-    "\u53ea\u8f93\u51fa\u8f6c\u5199\u6587\u672c",
-    "\u4e0d\u8981\u56de\u7b54\u95ee\u9898",
-    "\u4e0d\u8981\u81ea\u6211\u4ecb\u7ecd",
-    "\u4e0d\u8981\u89e3\u91ca",
-    "\u5982\u679c\u97f3\u9891\u91cc\u7684\u4eba\u95ee\u4f60\u662f\u4ec0\u4e48\u6a21\u578b",
-    "\u5982\u679c\u6ca1\u6709\u6e05\u695a\u7684\u4eba\u58f0",
-    "ASR only",
-    "Transcribe the speech",
-    "Output only the words",
-    "Do not answer",
-    "do not say you are Qwen",
-    "speech-to-text",
-    "transcription engine",
-    "Never answer questions",
-    "never add facts",
-    "\u8bf7\u9010\u5b57\u8f6c\u5199\u8fd9\u6bb5\u97f3\u9891",
-    "\u53ea\u8f93\u51fa\u539f\u8bdd",
 )
 
 app = Flask(__name__)
@@ -179,16 +155,13 @@ def repair_text(text: str) -> str:
 
 
 def strip_internal_prompt(text: str) -> str:
-    cleaned = text
-    lowered = cleaned.lower()
-    cut_at = None
-    for marker in INTERNAL_PROMPT_MARKERS:
-        index = lowered.find(marker.lower())
-        if index > 0:
-            cut_at = index if cut_at is None else min(cut_at, index)
-    if cut_at is not None:
-        cleaned = cleaned[:cut_at]
-    return cleaned.strip(" \t\r\n\"'\u201c\u201d\u2018\u2019\uff0c,.;\u3002\uff1b;:\uff1a")
+    # Only discard a separate trailing block that repeats an actual ASR prompt.
+    # Short phrases such as "do not answer" can be part of the user's speech.
+    for prompt in (ASR_SYSTEM_PROMPT, TRANSCRIBE_PROMPT, TRANSCRIBE_RETRY_PROMPT):
+        suffix = re.search(r"\n\s*" + re.escape(prompt) + r"\s*$", text, re.IGNORECASE)
+        if suffix:
+            text = text[:suffix.start()]
+    return text.strip()
 
 
 def clean_transcript(text: str) -> str:
@@ -243,17 +216,6 @@ def load_mnn_model():
     started = time.time()
     qwen = mnn_llm.create(str(MODEL_CONFIG))
     qwen.load()
-    try:
-        qwen.set_config(
-            {
-                "max_new_tokens": 180,
-                "temperature": 0.6,
-                "topP": 0.9,
-                "reuse_kv": False,
-            }
-        )
-    except Exception:
-        pass
 
     mnn_model = qwen
     mnn_model_loaded_at = time.time() - started
@@ -286,18 +248,16 @@ def convert_to_wav(source: Path, target: Path):
 
 
 def configure_model(qwen, system_prompt: str, max_new_tokens: int, temperature: float):
-    try:
-        qwen.set_config(
-            {
-                "system_prompt": system_prompt,
-                "max_new_tokens": max_new_tokens,
-                "temperature": temperature,
-                "topP": 0.9,
-                "reuse_kv": False,
-            }
-        )
-    except Exception:
-        pass
+    if not qwen.set_config(
+        {
+            "system_prompt": system_prompt,
+            "max_new_tokens": max_new_tokens,
+            "temperature": temperature,
+            "topP": 0.9,
+            "reuse_kv": False,
+        }
+    ):
+        raise RuntimeError("MNN 模型配置失败。")
 
 
 def ask_mnn_model(
@@ -424,15 +384,6 @@ def shutdown_local_runtime(reason: str) -> None:
     stop_qwen3_backend()
     time.sleep(0.5)
     os._exit(0)
-
-
-def request_runtime_shutdown(reason: str) -> None:
-    threading.Thread(
-        target=shutdown_local_runtime,
-        args=(reason,),
-        name="qwen-runtime-shutdown",
-        daemon=True,
-    ).start()
 
 
 def valid_browser_client_id(value: object) -> str | None:
@@ -633,20 +584,12 @@ def trim_qwen3_working_set(minimum_available_mb: int | None = None) -> bool:
         return False
 
     available_mb = get_available_ram_mb()
-    if (
-        available_mb is None
-        or (minimum_available_mb if minimum_available_mb is not None else QWEN3_GGUF_TRIM_BELOW_RAM_MB) <= 0
-        or available_mb >= (minimum_available_mb if minimum_available_mb is not None else QWEN3_GGUF_TRIM_BELOW_RAM_MB)
-    ):
+    minimum = minimum_available_mb if minimum_available_mb is not None else QWEN3_GGUF_TRIM_BELOW_RAM_MB
+    if available_mb is None or minimum <= 0 or available_mb >= minimum:
         return False
 
     process_id = local_llama_process_id()
     if not process_id:
-        return False
-
-    try:
-        pid = int(process_id)
-    except (TypeError, ValueError):
         return False
 
     process_set_quota = 0x0100
@@ -659,7 +602,7 @@ def trim_qwen3_working_set(minimum_available_mb: int | None = None) -> bool:
     psapi.EmptyWorkingSet.argtypes = [ctypes.c_void_p]
     psapi.EmptyWorkingSet.restype = ctypes.c_int
 
-    handle = kernel32.OpenProcess(process_set_quota | process_query_information, False, pid)
+    handle = kernel32.OpenProcess(process_set_quota | process_query_information, False, process_id)
     if not handle:
         return False
     try:
@@ -669,14 +612,9 @@ def trim_qwen3_working_set(minimum_available_mb: int | None = None) -> bool:
 
 
 def assert_qwen3_request_memory() -> None:
-    memory = get_memory_pressure_summary(include_perf=True)
-    available_mb = memory.get("available_mb")
+    available_mb = get_available_ram_mb()
     if available_mb is None:
         return
-
-    available_mb = int(available_mb)
-    page_reads = memory.get("page_reads_per_sec")
-    page_writes = memory.get("page_writes_per_sec")
 
     if QWEN3_GGUF_HARD_MIN_REQUEST_RAM_MB > 0 and available_mb < QWEN3_GGUF_HARD_MIN_REQUEST_RAM_MB:
         raise RuntimeError(
@@ -689,15 +627,19 @@ def assert_qwen3_request_memory() -> None:
     if available_mb >= QWEN3_GGUF_MIN_REQUEST_RAM_MB:
         return
 
+    memory = get_memory_pressure_summary(include_perf=True)
+    page_reads = memory["page_reads_per_sec"]
+    page_writes = memory["page_writes_per_sec"]
+
     page_reads_too_high = (
         page_reads is not None
         and QWEN3_GGUF_MAX_PAGE_READS_PER_SEC > 0
-        and int(page_reads) > QWEN3_GGUF_MAX_PAGE_READS_PER_SEC
+        and page_reads > QWEN3_GGUF_MAX_PAGE_READS_PER_SEC
     )
     page_writes_too_high = (
         page_writes is not None
         and QWEN3_GGUF_MAX_PAGE_WRITES_PER_SEC > 0
-        and int(page_writes) > QWEN3_GGUF_MAX_PAGE_WRITES_PER_SEC
+        and page_writes > QWEN3_GGUF_MAX_PAGE_WRITES_PER_SEC
     )
     if page_reads_too_high or page_writes_too_high:
         raise RuntimeError(
@@ -706,18 +648,6 @@ def assert_qwen3_request_memory() -> None:
             f"\uff08PageReads/s={page_reads}, PageWrites/s={page_writes}\uff09\u3002"
             "\u5df2\u963b\u6b62\u672c\u6b21\u8bf7\u6c42\uff1b\u7b49\u51e0\u79d2\u6216\u91cd\u542f Qwen3 \u540e\u7aef\u540e\u518d\u8bd5\u3002"
         )
-
-    # Low Available RAM is common after the first Qwen3 audio request. If the
-    # page file is not being hit hard, allow short follow-up turns to continue.
-    return
-
-    available_mb = get_available_ram_mb()
-    if available_mb is None or available_mb >= QWEN3_GGUF_MIN_REQUEST_RAM_MB:
-        return
-    raise RuntimeError(
-        f"Qwen3 当前可用内存只有 {available_mb}MB，已阻止本次请求以避免 Windows 换页。"
-        " 请关闭其他程序或重启 Qwen3 后端后再试。"
-    )
 
 
 def ask_qwen3_gguf(
@@ -790,8 +720,7 @@ def ask_qwen3_audio(audio_path: Path, instruction: str) -> tuple[str, str]:
 
 
 def ask_backend(prompt: str, backend_id: str) -> str:
-    backend = normalize_backend(backend_id)
-    if backend == "qwen3-gguf":
+    if backend_id == "qwen3-gguf":
         return ask_qwen3_gguf(prompt)
     return ask_mnn_model(prompt)
 
@@ -821,8 +750,7 @@ def transcribe_audio(audio_path: str) -> str:
 
 def delete_if_exists(path: Path):
     try:
-        if path.exists():
-            path.unlink()
+        path.unlink(missing_ok=True)
     except OSError:
         pass
 
@@ -898,87 +826,66 @@ def vad_assets(filename):
     return send_from_directory(VAD_ASSETS_DIR, filename, mimetype=mimetype)
 
 
+def qwen3_status() -> dict:
+    qwen3_ready, qwen3_error, qwen3_state, qwen3_state_stale = qwen3_runtime_snapshot()
+    memory = get_memory_pressure_summary()
+    return {
+        "base_url": QWEN3_GGUF_BASE_URL,
+        "model": QWEN3_GGUF_MODEL,
+        "context": QWEN3_GGUF_CONTEXT,
+        "gpu_layers": QWEN3_GGUF_GPU_LAYERS,
+        "min_free_vram_mb": QWEN3_GGUF_MIN_FREE_VRAM_MB,
+        "cache_type_k": QWEN3_GGUF_CACHE_TYPE_K,
+        "cache_type_v": QWEN3_GGUF_CACHE_TYPE_V,
+        "flash_attn": QWEN3_GGUF_FLASH_ATTN,
+        "mlock": QWEN3_GGUF_MLOCK,
+        "parallel": QWEN3_GGUF_PARALLEL,
+        "batch_size": QWEN3_GGUF_BATCH_SIZE,
+        "ubatch_size": QWEN3_GGUF_UBATCH_SIZE,
+        "prompt_cache": QWEN3_GGUF_PROMPT_CACHE,
+        "prompt_cache_ram_mb": QWEN3_GGUF_PROMPT_CACHE_RAM_MB,
+        "ctx_checkpoints": QWEN3_GGUF_CTX_CHECKPOINTS,
+        "min_free_ram_mb": QWEN3_GGUF_MIN_FREE_RAM_MB,
+        "min_request_ram_mb": QWEN3_GGUF_MIN_REQUEST_RAM_MB,
+        "hard_min_request_ram_mb": QWEN3_GGUF_HARD_MIN_REQUEST_RAM_MB,
+        "max_page_reads_per_sec": QWEN3_GGUF_MAX_PAGE_READS_PER_SEC,
+        "max_page_writes_per_sec": QWEN3_GGUF_MAX_PAGE_WRITES_PER_SEC,
+        "trim_working_set": QWEN3_GGUF_TRIM_WORKING_SET,
+        "trim_below_ram_mb": QWEN3_GGUF_TRIM_BELOW_RAM_MB,
+        "available_ram_mb": memory["available_mb"],
+        "memory_pressure": memory,
+        "max_text_tokens": QWEN3_GGUF_MAX_TEXT_TOKENS,
+        "max_audio_tokens": QWEN3_GGUF_MAX_AUDIO_TOKENS,
+        "ready": qwen3_ready,
+        "error": qwen3_error,
+        "runtime": qwen3_state,
+        "runtime_stale": qwen3_state_stale,
+    }
+
+
 @app.get("/models")
 def models():
-    qwen3_ready, qwen3_error, qwen3_state, qwen3_state_stale = qwen3_runtime_snapshot()
     return jsonify(
         {
             "default_backend": normalize_backend(DEFAULT_BACKEND),
             "backends": list(BACKENDS.values()),
-            "qwen3": {
-                "base_url": QWEN3_GGUF_BASE_URL,
-                "model": QWEN3_GGUF_MODEL,
-                "context": QWEN3_GGUF_CONTEXT,
-                "gpu_layers": QWEN3_GGUF_GPU_LAYERS,
-                "min_free_vram_mb": QWEN3_GGUF_MIN_FREE_VRAM_MB,
-                "cache_type_k": QWEN3_GGUF_CACHE_TYPE_K,
-                "cache_type_v": QWEN3_GGUF_CACHE_TYPE_V,
-                "flash_attn": QWEN3_GGUF_FLASH_ATTN,
-                "mlock": QWEN3_GGUF_MLOCK,
-                "parallel": QWEN3_GGUF_PARALLEL,
-                "batch_size": QWEN3_GGUF_BATCH_SIZE,
-                "ubatch_size": QWEN3_GGUF_UBATCH_SIZE,
-                "prompt_cache": QWEN3_GGUF_PROMPT_CACHE,
-                "prompt_cache_ram_mb": QWEN3_GGUF_PROMPT_CACHE_RAM_MB,
-                "ctx_checkpoints": QWEN3_GGUF_CTX_CHECKPOINTS,
-                "min_free_ram_mb": QWEN3_GGUF_MIN_FREE_RAM_MB,
-                "min_request_ram_mb": QWEN3_GGUF_MIN_REQUEST_RAM_MB,
-                "hard_min_request_ram_mb": QWEN3_GGUF_HARD_MIN_REQUEST_RAM_MB,
-                "max_page_reads_per_sec": QWEN3_GGUF_MAX_PAGE_READS_PER_SEC,
-                "max_page_writes_per_sec": QWEN3_GGUF_MAX_PAGE_WRITES_PER_SEC,
-                "trim_working_set": QWEN3_GGUF_TRIM_WORKING_SET,
-                "trim_below_ram_mb": QWEN3_GGUF_TRIM_BELOW_RAM_MB,
-                "available_ram_mb": get_available_ram_mb(),
-                "memory_pressure": get_memory_pressure_summary(),
-                "max_text_tokens": QWEN3_GGUF_MAX_TEXT_TOKENS,
-                "max_audio_tokens": QWEN3_GGUF_MAX_AUDIO_TOKENS,
-                "ready": qwen3_ready,
-                "error": qwen3_error,
-                "runtime": qwen3_state,
-                "runtime_stale": qwen3_state_stale,
-            },
+            "qwen3": qwen3_status(),
         }
     )
 
 
 @app.get("/health")
 def health():
-    qwen3_ready, qwen3_error, qwen3_state, qwen3_state_stale = qwen3_runtime_snapshot()
+    qwen3_fields = {
+        name if name in {"available_ram_mb", "memory_pressure"} else f"qwen3_{name}": value
+        for name, value in qwen3_status().items()
+    }
     return jsonify(
         {
             "ok": True,
             "default_backend": normalize_backend(DEFAULT_BACKEND),
             "backends": list(BACKENDS.values()),
-            "qwen3_base_url": QWEN3_GGUF_BASE_URL,
-            "qwen3_model": QWEN3_GGUF_MODEL,
-            "qwen3_context": QWEN3_GGUF_CONTEXT,
-            "qwen3_gpu_layers": QWEN3_GGUF_GPU_LAYERS,
-            "qwen3_min_free_vram_mb": QWEN3_GGUF_MIN_FREE_VRAM_MB,
-            "qwen3_cache_type_k": QWEN3_GGUF_CACHE_TYPE_K,
-            "qwen3_cache_type_v": QWEN3_GGUF_CACHE_TYPE_V,
-            "qwen3_flash_attn": QWEN3_GGUF_FLASH_ATTN,
-            "qwen3_mlock": QWEN3_GGUF_MLOCK,
-            "qwen3_parallel": QWEN3_GGUF_PARALLEL,
-            "qwen3_batch_size": QWEN3_GGUF_BATCH_SIZE,
-            "qwen3_ubatch_size": QWEN3_GGUF_UBATCH_SIZE,
-            "qwen3_prompt_cache": QWEN3_GGUF_PROMPT_CACHE,
-            "qwen3_prompt_cache_ram_mb": QWEN3_GGUF_PROMPT_CACHE_RAM_MB,
-            "qwen3_ctx_checkpoints": QWEN3_GGUF_CTX_CHECKPOINTS,
-            "qwen3_min_free_ram_mb": QWEN3_GGUF_MIN_FREE_RAM_MB,
-            "qwen3_min_request_ram_mb": QWEN3_GGUF_MIN_REQUEST_RAM_MB,
-            "qwen3_hard_min_request_ram_mb": QWEN3_GGUF_HARD_MIN_REQUEST_RAM_MB,
-            "qwen3_max_page_reads_per_sec": QWEN3_GGUF_MAX_PAGE_READS_PER_SEC,
-            "qwen3_max_page_writes_per_sec": QWEN3_GGUF_MAX_PAGE_WRITES_PER_SEC,
-            "qwen3_trim_working_set": QWEN3_GGUF_TRIM_WORKING_SET,
-            "qwen3_trim_below_ram_mb": QWEN3_GGUF_TRIM_BELOW_RAM_MB,
-            "available_ram_mb": get_available_ram_mb(),
-            "memory_pressure": get_memory_pressure_summary(),
-            "qwen3_max_text_tokens": QWEN3_GGUF_MAX_TEXT_TOKENS,
-            "qwen3_max_audio_tokens": QWEN3_GGUF_MAX_AUDIO_TOKENS,
-            "qwen3_ready": qwen3_ready,
-            "qwen3_error": qwen3_error,
-            "qwen3_runtime": qwen3_state,
-            "qwen3_runtime_stale": qwen3_state_stale,
+            **qwen3_fields,
             "model_config": str(MODEL_CONFIG),
             "data_dir": str(DATA_DIR),
             "vad_assets_dir": str(VAD_ASSETS_DIR),

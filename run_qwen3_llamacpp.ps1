@@ -7,62 +7,29 @@ $env:TEMP = $tempRoot
 $env:TMP = $tempRoot
 New-Item -ItemType Directory -Force $env:HF_HOME, $env:TEMP | Out-Null
 
-$apiModel = $env:QWEN3_GGUF_MODEL
-if (-not $apiModel) {
-    $apiModel = "qwen3-omni-30b-a3b-instruct-q4km"
+$settings = Get-Content -LiteralPath (Join-Path $PSScriptRoot "runtime_defaults.json") -Raw | ConvertFrom-Json
+foreach ($property in $settings.PSObject.Properties) {
+    $override = [Environment]::GetEnvironmentVariable($property.Name)
+    if ($override) { $property.Value = $override }
 }
 
-$hfRepo = $env:QWEN3_GGUF_HF_REPO
-if (-not $hfRepo) {
-    $hfRepo = "ggml-org/Qwen3-Omni-30B-A3B-Instruct-GGUF:Q4_K_M"
-}
-
-$ctx = $env:QWEN3_GGUF_CONTEXT
-if (-not $ctx) { $ctx = "768" }
-
-$cacheTypeK = $env:QWEN3_GGUF_CACHE_TYPE_K
-if (-not $cacheTypeK) { $cacheTypeK = "q8_0" }
-
-$cacheTypeV = $env:QWEN3_GGUF_CACHE_TYPE_V
-if (-not $cacheTypeV) { $cacheTypeV = "q8_0" }
-
-$flashAttn = $env:QWEN3_GGUF_FLASH_ATTN
-if (-not $flashAttn) { $flashAttn = "on" }
-
-$mlock = $env:QWEN3_GGUF_MLOCK
-if (-not $mlock) { $mlock = "off" }
-
-$parallel = $env:QWEN3_GGUF_PARALLEL
-if (-not $parallel) { $parallel = "1" }
-
-$batchSize = $env:QWEN3_GGUF_BATCH_SIZE
-if (-not $batchSize) { $batchSize = "256" }
-
-$ubatchSize = $env:QWEN3_GGUF_UBATCH_SIZE
-if (-not $ubatchSize) { $ubatchSize = "64" }
-
-$promptCacheRamMb = $env:QWEN3_GGUF_PROMPT_CACHE_RAM_MB
-if (-not $promptCacheRamMb) { $promptCacheRamMb = "0" }
-
-$promptCache = $env:QWEN3_GGUF_PROMPT_CACHE
-if (-not $promptCache) { $promptCache = "off" }
-
-$ctxCheckpoints = $env:QWEN3_GGUF_CTX_CHECKPOINTS
-if (-not $ctxCheckpoints) { $ctxCheckpoints = "0" }
-
-$minFreeRamBeforeLaunchMb = $env:QWEN3_GGUF_MIN_FREE_RAM_BEFORE_LAUNCH_MB
-if (-not $minFreeRamBeforeLaunchMb) { $minFreeRamBeforeLaunchMb = "4096" }
-$minFreeRamBeforeLaunchMb = [int]$minFreeRamBeforeLaunchMb
-
-$minFreeRamMb = $env:QWEN3_GGUF_MIN_FREE_RAM_MB
-if (-not $minFreeRamMb) { $minFreeRamMb = "1024" }
-$minFreeRamMb = [int]$minFreeRamMb
-
-$nglSetting = $env:QWEN3_GGUF_GPU_LAYERS
-if (-not $nglSetting) { $nglSetting = "auto" }
-
-$port = $env:QWEN3_GGUF_PORT
-if (-not $port) { $port = "8080" }
+$apiModel = $settings.QWEN3_GGUF_MODEL
+$hfRepo = $settings.QWEN3_GGUF_HF_REPO
+$ctx = $settings.QWEN3_GGUF_CONTEXT
+$cacheTypeK = $settings.QWEN3_GGUF_CACHE_TYPE_K
+$cacheTypeV = $settings.QWEN3_GGUF_CACHE_TYPE_V
+$flashAttn = $settings.QWEN3_GGUF_FLASH_ATTN
+$mlock = $settings.QWEN3_GGUF_MLOCK
+$parallel = $settings.QWEN3_GGUF_PARALLEL
+$batchSize = $settings.QWEN3_GGUF_BATCH_SIZE
+$ubatchSize = $settings.QWEN3_GGUF_UBATCH_SIZE
+$promptCacheRamMb = $settings.QWEN3_GGUF_PROMPT_CACHE_RAM_MB
+$promptCache = $settings.QWEN3_GGUF_PROMPT_CACHE
+$ctxCheckpoints = $settings.QWEN3_GGUF_CTX_CHECKPOINTS
+$minFreeRamBeforeLaunchMb = [int]$settings.QWEN3_GGUF_MIN_FREE_RAM_BEFORE_LAUNCH_MB
+$minFreeRamMb = [int]$settings.QWEN3_GGUF_MIN_FREE_RAM_MB
+$nglSetting = $settings.QWEN3_GGUF_GPU_LAYERS
+$port = $settings.QWEN3_GGUF_PORT
 
 $modelDir = $env:QWEN3_GGUF_MODEL_DIR
 if (-not $modelDir) {
@@ -233,13 +200,9 @@ if (Test-Enabled -Value $promptCache) {
     $baseArgs += @("--no-cache-prompt")
 }
 
-$startupTimeoutSeconds = $env:QWEN3_GGUF_STARTUP_TIMEOUT_SECONDS
-if (-not $startupTimeoutSeconds) { $startupTimeoutSeconds = "180" }
-$startupTimeoutSeconds = [int]$startupTimeoutSeconds
+$startupTimeoutSeconds = [int]$settings.QWEN3_GGUF_STARTUP_TIMEOUT_SECONDS
 
-$minFreeVramMb = $env:QWEN3_GGUF_MIN_FREE_VRAM_MB
-if (-not $minFreeVramMb) { $minFreeVramMb = "768" }
-$minFreeVramMb = [int]$minFreeVramMb
+$minFreeVramMb = [int]$settings.QWEN3_GGUF_MIN_FREE_VRAM_MB
 
 $logDir = $env:QWEN3_GGUF_LOG_DIR
 if (-not $logDir) { $logDir = $tempRoot }

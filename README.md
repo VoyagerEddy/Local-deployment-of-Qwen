@@ -2,6 +2,8 @@
 
 This app defaults to `Qwen3-Omni-30B-A3B-Instruct` through GGUF quantization and a local llama.cpp/Ollama-compatible API.
 
+`runtime_defaults.json` contains the shared defaults for the Flask app and llama.cpp launcher. Environment variables override these defaults; `run_voice_chat.ps1` preserves those overrides. If `QWEN3_GGUF_BASE_URL` is unset, the app uses the configured `QWEN3_GGUF_PORT` on localhost. Request-time paging counters are queried only when available RAM is below the soft threshold.
+
 ## Paths
 
 - Python environment: `D:\download\Qwen\_local\QwenEnvs\qwen25omni`
