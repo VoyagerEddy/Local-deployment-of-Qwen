@@ -15,10 +15,11 @@ import uuid
 from functools import wraps
 from pathlib import Path
 
-from flask import Flask, Response, jsonify, render_template, request, send_from_directory
+from flask import Flask, Response, g, has_request_context, jsonify, render_template, request, send_from_directory
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from qwen_tts import QwenTTS, TTSError
+from generation_stats import GenerationStatsRegistry
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -111,6 +112,7 @@ tts_service = QwenTTS(
     prepare_memory=lambda minimum: trim_qwen3_working_set(minimum_available_mb=minimum),
 )
 model_request_lock = threading.Lock()
+generation_registry = GenerationStatsRegistry()
 mnn_model_lock = threading.Lock()
 mnn_model = None
 mnn_model_loaded_at = None
@@ -272,10 +274,82 @@ def ask_mnn_model(
         if reset:
             qwen.reset()
         configure_model(qwen, system_prompt, max_new_tokens, temperature)
-        response = qwen.response(prompt, False)
-        if reset:
-            qwen.reset()
+        stats = current_generation_stats()
+        if stats:
+            stats.begin()
+        try:
+            response = qwen.response(prompt, False)
+            if stats:
+                # Capture native counters before reset discards the context.
+                context = qwen.context
+                count = context.gen_seq_len
+                decode_us = context.decode_us
+                if isinstance(count, int) and isinstance(decode_us, (int, float)):
+                    # NORMAL_FINISHED includes the sampled EOS, which is not
+                    # emitted or included in MNN's decode timer.
+                    if getattr(context, "status", None) == 1 and count > 0:
+                        count -= 1
+                    stats.record({"timings": {
+                        "predicted_n": count,
+                        "predicted_ms": decode_us / 1000,
+                    }})
+        finally:
+            if reset:
+                qwen.reset()
     return repair_text(response).strip()
+
+
+def current_generation_stats():
+    return getattr(g, "generation_stats", None) if has_request_context() else None
+
+
+def iter_completion_events(response):
+    """Parse SSE frames rather than treating arbitrary transport chunks as tokens."""
+    lines = []
+    for raw_line in response:
+        line = raw_line.decode("utf-8").rstrip("\r\n")
+        if not line:
+            if lines:
+                yield "\n".join(lines)
+                lines = []
+        elif line.startswith("data:"):
+            lines.append(line[5:].lstrip(" "))
+    if lines:
+        yield "\n".join(lines)
+
+
+def read_chat_completion(response, stats=None):
+    if "text/event-stream" not in response.headers.get("Content-Type", ""):
+        data = json.loads(response.read().decode("utf-8"))
+        if stats:
+            stats.record(data)
+        return data["choices"][0]["message"]["content"].strip()
+
+    content = []
+    completed = False
+    for event in iter_completion_events(response):
+        if event == "[DONE]":
+            completed = True
+            break
+        data = json.loads(event)
+        if data.get("error"):
+            error = data["error"]
+            raise RuntimeError(error.get("message", str(error)) if isinstance(error, dict) else str(error))
+        has_token = False
+        for choice in data.get("choices") or []:
+            delta = choice.get("delta") or {}
+            text = delta.get("content") or ""
+            reasoning = delta.get("reasoning_content") or delta.get("reasoning") or ""
+            if text:
+                content.append(text)
+            has_token = has_token or bool(text or reasoning)
+            if choice.get("finish_reason") is not None:
+                completed = True
+        if stats:
+            stats.record(data, has_token=has_token)
+    if not completed:
+        raise RuntimeError("Qwen3 GGUF 生成连接提前结束，请重试。")
+    return "".join(content).strip()
 
 
 def openai_chat_completion(
@@ -296,6 +370,9 @@ def openai_chat_completion(
         "messages": messages,
         "max_tokens": max_new_tokens,
         "temperature": temperature,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+        "timings_per_token": True,
     }
     request = urllib.request.Request(
         f"{QWEN3_GGUF_BASE_URL}/chat/completions",
@@ -303,9 +380,15 @@ def openai_chat_completion(
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    stats = current_generation_stats()
+    if stats:
+        stats.begin()
     try:
         with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
-            data = json.loads(response.read().decode("utf-8"))
+            try:
+                return read_chat_completion(response, stats)
+            except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+                raise RuntimeError("Qwen3 GGUF 返回格式异常。") from exc
     except TimeoutError as exc:
         raise RuntimeError("Qwen3 GGUF 响应超时；30B Q4_K_M 首次加载会很慢。") from exc
     except (ConnectionResetError, ConnectionAbortedError, http.client.RemoteDisconnected) as exc:
@@ -323,11 +406,6 @@ def openai_chat_completion(
 
     finally:
         trim_qwen3_working_set()
-
-    try:
-        return data["choices"][0]["message"]["content"].strip()
-    except (KeyError, IndexError, TypeError) as exc:
-        raise RuntimeError(f"Qwen3 GGUF 返回格式异常: {data}") from exc
 
 
 def read_llama_state() -> dict | None:
@@ -937,6 +1015,29 @@ def synthesize_speech():
     return Response(audio, mimetype="audio/wav", headers={"Cache-Control": "no-store"})
 
 
+def start_generation_stats(value):
+    if value is not None and (not isinstance(value, str) or valid_browser_client_id(value) != value):
+        return jsonify({"error": "invalid generation_id"}), 400
+    generation_id = value if value is not None else uuid.uuid4().hex
+    try:
+        stats = generation_registry.create(generation_id)
+    except FileExistsError:
+        return jsonify({"error": "generation_id already exists"}), 409
+    g.generation_id = generation_id
+    g.generation_stats = stats
+    return None
+
+
+@app.get("/generation-stats/<generation_id>")
+def generation_stats_status(generation_id):
+    if valid_browser_client_id(generation_id) != generation_id:
+        return jsonify({"error": "invalid generation_id"}), 400
+    stats = generation_registry.snapshot(generation_id)
+    if stats is None:
+        return jsonify({"error": "generation not found"}), 404
+    return jsonify(stats), 200, {"Cache-Control": "no-store"}
+
+
 @app.post("/ask-text")
 @serialized_model_request
 def ask_text():
@@ -946,16 +1047,23 @@ def ask_text():
     if not text:
         return jsonify({"error": "empty text"}), 400
 
+    tracking_error = start_generation_stats(data.get("generation_id"))
+    if tracking_error:
+        return tracking_error
     started = time.time()
     try:
         reply = ask_backend(text, backend)
     except Exception as exc:
+        g.generation_stats.finish(error=True)
         return jsonify({"error": str(exc), "backend": backend}), 500
+    g.generation_stats.finish()
     return jsonify(
         {
             "reply": reply,
             "backend": backend,
             "elapsed": round(time.time() - started, 2),
+            "generation_id": g.generation_id,
+            "generation": g.generation_stats.snapshot(),
         }
     )
 
@@ -967,15 +1075,17 @@ def ask_audio():
     if upload is None:
         return jsonify({"error": "missing audio file"}), 400
 
+    tracking_error = start_generation_stats(request.form.get("generation_id"))
+    if tracking_error:
+        return tracking_error
     backend = normalize_backend(request.form.get("backend"))
     instruction = (request.form.get("instruction") or DEFAULT_AUDIO_PROMPT).strip()
     request_id = uuid.uuid4().hex
     source = RECORDINGS_DIR / f"{request_id}{upload_suffix(upload.filename)}"
     wav = RECORDINGS_DIR / f"{request_id}.16k.wav"
-    upload.save(source)
-
     started = time.time()
     try:
+        upload.save(source)
         convert_to_wav(source, wav)
         if backend == "qwen3-gguf":
             transcript, reply = ask_qwen3_audio(wav, instruction)
@@ -989,17 +1099,21 @@ def ask_audio():
             )
             reply = ask_mnn_model(reply_prompt)
     except Exception as exc:
+        g.generation_stats.finish(error=True)
         return jsonify({"error": str(exc)}), 500
     finally:
         delete_if_exists(source)
         delete_if_exists(wav)
 
+    g.generation_stats.finish()
     return jsonify(
         {
             "transcript": transcript,
             "reply": reply,
             "backend": backend,
             "elapsed": round(time.time() - started, 2),
+            "generation_id": g.generation_id,
+            "generation": g.generation_stats.snapshot(),
         }
     )
 

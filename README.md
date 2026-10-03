@@ -161,6 +161,16 @@ http://127.0.0.1:7860
 - The app does not load the existing Qwen2.5 MNN model at startup.
 - Qwen2.5 MNN remains only as a selectable fallback in the UI.
 
+## 生成速度
+
+页面顶部和“运行状态”显示生成速度（`token/s`），侧栏同时显示已生成 token 数。文字和语音请求每秒刷新统计，完成后保留本次生成的平均速度；等待首个 token 时显示“准备中”，失败时清除本次统计。
+
+llama.cpp 使用 [`timings_per_token` 返回的真实生成计数和计时](https://github.com/ggml-org/llama.cpp/blob/b10711/tools/server/README.md)，速度为生成阶段的累计平均值，不包含输入处理、语音合成和播放。Qwen3 语音请求中的 token 数包含模型输出的转写、回答及 JSON 格式。兼容后端未返回原生计时（如 Ollama 的 OpenAI 接口）时，运行中按输出分片估算，并明确显示“约”；完成后的 `usage.completion_tokens` 会修正 token 数，速度仍标注为估算。
+
+MNN 备用模型显示“完成后统计”，回复生成结束后读取原生 token 数和解码计时；语音请求显示最后回答阶段的统计。MNN 正常停止时从计数中扣除未输出的 EOS，达到生成上限时保留完整计数。
+
+`POST /ask-text` 和 `POST /ask-audio` 可传入唯一的 `generation_id`，`GET /generation-stats/<generation_id>` 可在处理期间读取统计，无需等待推理锁。原回复接口仍返回 JSON，新增 `generation_id` 与 `generation` 字段。统计按请求隔离，完成记录保留最多 15 分钟，总记录数限制为 128。
+
 ## 独立 Qwen3-TTS 本地语音输出
 
 语音输出使用独立的 `Qwen3-TTS-12Hz-1.7B-Base`，把 Qwen3-Omni 的回答文字合成为 WAV。它需要自己的 GGUF 和 mmproj；现有 Omni GGUF 的 Talker 权重不能直接充当这个 TTS 模型。浏览器接收并播放后端返回的音频。每个分段固定使用同一份官方 Chelsie 样音作参考克隆，避免没有说话人条件时分段音色漂移；这是独立 TTS 对 Chelsie 参考音色的克隆，不是 Qwen3-Omni 原生 Talker 的 `speaker="Chelsie"` 输出。

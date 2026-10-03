@@ -91,6 +91,13 @@
       white-space: nowrap;
     }
 
+    .generation-summary {
+      font-size: 13px;
+      color: var(--teal);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+    }
+
     .dot {
       width: 9px;
       height: 9px;
@@ -304,6 +311,7 @@
           <span id="ttsStatus" aria-live="polite">浏览器 / 系统语音</span>
         </div>
         <button id="stopSpeechBtn" type="button" hidden>停止播报</button>
+        <span id="generationSummary" class="generation-summary" title="当前模型输出的累计平均速度，不含输入处理和语音合成、播放时间">生成速度：—</span>
         <div class="status"><span id="dot" class="dot ready"></span><span id="status">就绪</span></div>
       </div>
     </header>
@@ -320,6 +328,8 @@
           <div class="metric"><span>VAD</span><strong id="vadState">未启动</strong></div>
           <div class="metric"><span>概率</span><strong id="vadProb">-</strong></div>
           <div class="metric"><span>上次耗时</span><strong id="elapsed">-</strong></div>
+          <div class="metric" title="当前模型输出的累计平均速度，不含输入处理和语音合成、播放时间"><span>生成速度（平均）</span><strong id="generationSpeed">—</strong></div>
+          <div class="metric" title="模型输出的 token 数；语音请求可能包含转写内容和 JSON 格式"><span>已生成 token</span><strong id="generatedTokens">—</strong></div>
         </section>
 
         <section class="panel">
@@ -359,6 +369,9 @@
     const statusText = document.getElementById("status");
     const dot = document.getElementById("dot");
     const elapsed = document.getElementById("elapsed");
+    const generationSummary = document.getElementById("generationSummary");
+    const generationSpeed = document.getElementById("generationSpeed");
+    const generatedTokens = document.getElementById("generatedTokens");
     const vadState = document.getElementById("vadState");
     const vadProb = document.getElementById("vadProb");
 
@@ -391,6 +404,72 @@
     let runtimeEventSource = null;
     let runtimeHeartbeatTimer = null;
     let runtimeClientRegistered = false;
+    let generationPolling = null;
+
+    function displayGeneration(stats, finalOnly = false) {
+      const available = stats && typeof stats === "object" && stats.status !== "error";
+      const count = available && Number.isFinite(stats.generated_tokens) && stats.generated_tokens >= 0
+        ? stats.generated_tokens : null;
+      const speed = available && Number.isFinite(stats.tokens_per_second) && stats.tokens_per_second >= 0
+        ? stats.tokens_per_second : null;
+      const preparing = available && (stats.status === "waiting" || (stats.status === "generating" && count === 0));
+      const prefix = available && stats.estimated ? "约 " : "";
+      let speedText = "暂不可用";
+      if (preparing) speedText = finalOnly ? "完成后统计" : "准备中";
+      else if (speed !== null) speedText = `${prefix}${speed.toFixed(1)} token/s`;
+      else if (available && finalOnly && stats.status !== "complete") speedText = "完成后统计";
+      generationSpeed.textContent = speedText;
+      generationSummary.textContent = `生成速度：${speedText}`;
+      generatedTokens.textContent = count !== null ? `${prefix}${Math.round(count).toLocaleString("zh-CN")}` : "—";
+    }
+
+    function stopGenerationPolling() {
+      const session = generationPolling;
+      generationPolling = null;
+      if (!session) return;
+      window.clearInterval(session.timer);
+      session.controller.abort();
+    }
+
+    async function pollGeneration(session) {
+      if (generationPolling !== session || session.pending) return;
+      session.pending = true;
+      try {
+        const res = await fetch(`/generation-stats/${encodeURIComponent(session.id)}`, {
+          signal: session.controller.signal,
+          cache: "no-store",
+        });
+        if (generationPolling !== session || res.status === 404) return;
+        if (!res.ok) throw new Error("无法读取生成速度");
+        const data = await res.json();
+        if (generationPolling !== session) return;
+        const stats = data.generation || data;
+        displayGeneration(stats, session.finalOnly);
+        if (stats.status === "complete" || stats.status === "error") stopGenerationPolling();
+      } catch (err) {
+        if (generationPolling === session && err.name !== "AbortError") displayGeneration(null);
+      } finally {
+        session.pending = false;
+      }
+    }
+
+    function startGenerationPolling(backend) {
+      stopGenerationPolling();
+      const id = typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `${runtimeClientId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const session = { id, controller: new AbortController(), pending: false, timer: null, finalOnly: backend === "qwen25-mnn" };
+      generationPolling = session;
+      displayGeneration({ status: "waiting", generated_tokens: null, tokens_per_second: null }, session.finalOnly);
+      session.timer = window.setInterval(() => pollGeneration(session), 1000);
+      pollGeneration(session);
+      return id;
+    }
+
+    function finishGeneration(stats) {
+      stopGenerationPolling();
+      displayGeneration(stats);
+    }
 
     function runtimeClientPayload() {
       return JSON.stringify({ client_id: runtimeClientId });
@@ -441,12 +520,25 @@
     window.addEventListener("pageshow", startRuntimeHeartbeat);
     window.addEventListener("pagehide", stopRuntimeHeartbeat);
     window.addEventListener("pagehide", () => {
+      stopGenerationPolling();
       stopSpeech();
       if (ttsStatusController) ttsStatusController.abort();
     });
 
-    const ortRuntime = globalThis.ort;
-    if (ortRuntime) {
+    function runtimeValue(name) {
+      const root = typeof globalThis !== "undefined" ? globalThis : window;
+      if (root && root[name]) return root[name];
+      if (typeof self !== "undefined" && self[name]) return self[name];
+      if (typeof window !== "undefined" && window[name]) return window[name];
+      try {
+        return Function(`return typeof ${name} !== "undefined" ? ${name} : null`)();
+      } catch (err) {
+        return null;
+      }
+    }
+
+    const ortRuntime = runtimeValue("ort");
+    if (ortRuntime && ortRuntime.env && ortRuntime.env.wasm) {
       ortRuntime.env.wasm.numThreads = 1;
       ortRuntime.env.wasm.wasmPaths = "/vad-assets/";
     }
@@ -730,6 +822,8 @@
       addMessage("user", text);
       textInput.value = "";
       setBusy(true);
+      const backend = selectedBackend();
+      const generationId = startGenerationPolling(backend);
       const expectedEpoch = speechEpoch;
       let replyReceived = false;
       let errorMessage = "";
@@ -738,29 +832,35 @@
         const res = await fetch("/ask-text", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, backend: selectedBackend() }),
+          body: JSON.stringify({ text, backend, generation_id: generationId }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "request failed");
+        finishGeneration(data.generation);
         elapsed.textContent = `${data.elapsed}s`;
         addMessage("assistant", data.reply || "");
         replyReceived = true;
         await speak(data.reply || "", expectedEpoch);
       } catch (err) {
+        if (!replyReceived) finishGeneration(null);
         if (err.name !== "AbortError") {
           errorMessage = replyReceived ? "语音输出失败" : "请求失败";
           addMessage("system", `${errorMessage}：${err.message}`);
         }
       } finally {
+        stopGenerationPolling();
         await finishInteraction(errorMessage);
       }
     }
 
     async function uploadAudio(blob, userNode) {
+      const backend = selectedBackend();
       const form = new FormData();
       form.append("audio", blob, "recording.wav");
-      form.append("backend", selectedBackend());
+      form.append("backend", backend);
       setBusy(true);
+      const generationId = startGenerationPolling(backend);
+      form.append("generation_id", generationId);
       const expectedEpoch = speechEpoch;
       let replyReceived = false;
       let errorMessage = "";
@@ -769,18 +869,21 @@
         const res = await fetch("/ask-audio", { method: "POST", body: form });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "request failed");
+        finishGeneration(data.generation);
         elapsed.textContent = `${data.elapsed}s`;
         userNode.textContent = data.transcript || "（未识别到语音）";
         addMessage("assistant", data.reply || "");
         replyReceived = true;
         await speak(data.reply || "", expectedEpoch);
       } catch (err) {
+        if (!replyReceived) finishGeneration(null);
         if (err.name !== "AbortError") {
           errorMessage = replyReceived ? "语音输出失败" : "语音请求失败";
           if (!replyReceived) userNode.textContent = "（语音转写失败）";
           addMessage("system", `${errorMessage}：${err.message}`);
         }
       } finally {
+        stopGenerationPolling();
         await finishInteraction(errorMessage);
       }
     }
@@ -798,7 +901,7 @@
 
     async function ensureVAD() {
       if (vadInstance) return vadInstance;
-      const vadRuntime = globalThis.vad;
+      const vadRuntime = runtimeValue("vad");
       if (!vadRuntime || !vadRuntime.MicVAD) {
         throw new Error("Silero VAD 资产未加载。");
       }
