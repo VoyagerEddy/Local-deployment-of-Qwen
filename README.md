@@ -129,7 +129,7 @@ cd D:\download\Qwen\_local
 .\install_shortcut.ps1
 ```
 
-Double-click `Qwen 本地多模态` on the desktop. The launcher starts the llama.cpp backend and Flask app in hidden processes, waits until both are ready, and opens `http://127.0.0.1:7860` in the default browser. Reopening the shortcut while the project is already running only opens the page; it does not start duplicate services.
+Double-click the Qwen desktop shortcut. The launcher starts the llama.cpp backend and Flask app in hidden processes, waits until both are ready, and opens `http://127.0.0.1:7860` in the default browser. Reopening the shortcut while the project is already running only opens the page; it does not start duplicate services.
 
 The page sends a local heartbeat to Flask. When all Qwen pages are closed, the app waits 8 seconds (so a refresh does not stop it), then stops both Flask and the Qwen llama.cpp backend. If the browser exits unexpectedly without sending a close notification, the missed-heartbeat fallback also shuts them down.
 
@@ -161,30 +161,30 @@ http://127.0.0.1:7860
 - The app does not load the existing Qwen2.5 MNN model at startup.
 - Qwen2.5 MNN remains only as a selectable fallback in the UI.
 
-## 生成速度
+## Generation Speed
 
-页面顶部和“运行状态”显示生成速度（`token/s`），侧栏同时显示已生成 token 数。文字和语音请求每秒刷新统计，完成后保留本次生成的平均速度；等待首个 token 时显示“准备中”，失败时清除本次统计。
+The top of the page and the Run status area display generation speed (`token/s`), while the sidebar also shows the number of generated tokens. Statistics refresh every second for text and audio requests, and the average speed for the request remains visible after completion. The status indicates Preparing while waiting for the first token; statistics for the request are cleared on failure.
 
-llama.cpp 使用 [`timings_per_token` 返回的真实生成计数和计时](https://github.com/ggml-org/llama.cpp/blob/b10711/tools/server/README.md)，速度为生成阶段的累计平均值，不包含输入处理、语音合成和播放。Qwen3 语音请求中的 token 数包含模型输出的转写、回答及 JSON 格式。兼容后端未返回原生计时（如 Ollama 的 OpenAI 接口）时，运行中按输出分片估算，并明确显示“约”；完成后的 `usage.completion_tokens` 会修正 token 数，速度仍标注为估算。
+For llama.cpp, the app uses [the actual generation counts and timings returned by `timings_per_token`](https://github.com/ggml-org/llama.cpp/blob/b10711/tools/server/README.md). Speed is the cumulative average during generation and excludes input processing, speech synthesis, and playback. Token counts for Qwen3 audio requests include the model's transcription, answer, and JSON formatting. When a compatible backend does not return native timings, such as Ollama's OpenAI interface, the app estimates statistics from output chunks during generation and clearly marks them as approximate. The final `usage.completion_tokens` corrects the token count, but speed remains labeled as an estimate.
 
-MNN 备用模型显示“完成后统计”，回复生成结束后读取原生 token 数和解码计时；语音请求显示最后回答阶段的统计。MNN 正常停止时从计数中扣除未输出的 EOS，达到生成上限时保留完整计数。
+For the MNN fallback model, the status indicates Reported after completion. The app reads the native token count and decoding time after the response finishes generating; audio requests show statistics for the final answer stage. On a normal stop, the MNN count excludes the EOS token that was not output. When the generation limit is reached, the full count is retained.
 
-`POST /ask-text` 和 `POST /ask-audio` 可传入唯一的 `generation_id`，`GET /generation-stats/<generation_id>` 可在处理期间读取统计，无需等待推理锁。原回复接口仍返回 JSON，新增 `generation_id` 与 `generation` 字段。统计按请求隔离，完成记录保留最多 15 分钟，总记录数限制为 128。
+`POST /ask-text` and `POST /ask-audio` accept a unique `generation_id`. `GET /generation-stats/<generation_id>` can retrieve statistics during processing without waiting for the inference lock. The response endpoints still return JSON, with the added `generation_id` and `generation` fields. Statistics are isolated per request. Completed records are kept for up to 15 minutes, with a total limit of 128 records.
 
-## 独立 Qwen3-TTS 本地语音输出
+## Standalone Qwen3-TTS Local Voice Output
 
-语音输出使用独立的 `Qwen3-TTS-12Hz-1.7B-Base`，把 Qwen3-Omni 的回答文字合成为 WAV。它需要自己的 GGUF 和 mmproj；现有 Omni GGUF 的 Talker 权重不能直接充当这个 TTS 模型。浏览器接收并播放后端返回的音频。每个分段固定使用同一份官方 Chelsie 样音作参考克隆，避免没有说话人条件时分段音色漂移；这是独立 TTS 对 Chelsie 参考音色的克隆，不是 Qwen3-Omni 原生 Talker 的 `speaker="Chelsie"` 输出。
+Voice output uses the separate `Qwen3-TTS-12Hz-1.7B-Base` model to synthesize Qwen3-Omni's answer text into WAV audio. It requires its own GGUF and mmproj; the Talker weights in the existing Omni GGUF cannot directly serve as this TTS model. The browser receives and plays the audio returned by the backend. Every segment uses the same official Chelsie sample for reference voice cloning, preventing the voice from drifting between segments without speaker conditioning. This is a standalone TTS clone of the Chelsie reference voice, rather than output from Qwen3-Omni's native Talker with `speaker="Chelsie"`.
 
-页面有独立的“声音输出”选择框，提供 `Web TTS` 和 `Qwen3-TTS`，首次打开默认保留 Web TTS，并记住之后的选择。选中 Qwen3-TTS 后才调用本地模型合成。Flask 的 `GET /tts/status` 返回 `engine: "qwen3-tts"`、`ready`、`busy`、`error`、模型名、GPU 层数和固定 Chelsie 参考状态；`POST /tts` 接收 `{"text": "要朗读的文字", "language": "zh"}`，成功时返回 WAV。它通过本机 CLI 合成，无需另启 TTS HTTP 服务或占用新的端口。
+The page has a separate Voice output selector offering `Web TTS` and `Qwen3-TTS`. It defaults to Web TTS on the first visit and remembers subsequent selections. Local model synthesis is invoked only when Qwen3-TTS is selected. Flask's `GET /tts/status` returns `engine: "qwen3-tts"`, `ready`, `busy`, `error`, the model name, GPU layer count, and the status of the fixed Chelsie reference. `POST /tts` accepts `{"text": "Your text here", "language": "zh"}` and returns WAV audio on success. Synthesis runs through the local CLI, without a separate TTS HTTP service or an additional port.
 
-先手动运行一次准备脚本：
+First, run the setup script manually once:
 
 ```powershell
 cd D:\download\Qwen\_local
 .\setup_qwen3_tts.ps1
 ```
 
-脚本检查已有 `llama-tts.exe`，从 [ggml-org 官方 GGUF 仓库](https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF)下载模型，并从[阿里云官方音色表](https://help.aliyun.com/zh/model-studio/multimodal-timbre-list)的 Chelsie 行下载[中文样音](https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20251126/jnleoh/Chelsie_ZH.wav)。三个文件均核对完整大小和 SHA256：
+The script checks for an existing `llama-tts.exe`, downloads the models from [ggml-org's official GGUF repository](https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF), and downloads the [Chinese voice sample](https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20251126/jnleoh/Chelsie_ZH.wav) from the Chelsie entry in [Alibaba Cloud's official voice list](https://help.aliyun.com/zh/model-studio/multimodal-timbre-list). It verifies the complete file size and SHA256 of all three files:
 
 ```text
 QwenModels\Qwen3-TTS-12Hz-1.7B-Base-GGUF\Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf
@@ -192,18 +192,18 @@ QwenModels\Qwen3-TTS-12Hz-1.7B-Base-GGUF\mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gg
 QwenModels\Qwen3-TTS-12Hz-1.7B-Base-GGUF\voices\Chelsie.wav
 ```
 
-两个模型文件合计约 1.48 GB。脚本固定官方仓库 revision `ca27d74bc954b73dadab5b71ca265d87fc861a7c`；Chelsie 样音为 347,564 字节、24 kHz、单声道、16-bit PCM、7.24 秒，SHA256 为 `e2461d0e0fc2bf1e083ea7af40c3b6849e5912b2744162cab6e151c366097b53`。已校验文件不会重复下载，中断下载保留 `.partial` 以便续传。脚本支持已有 aria2c 或 Windows curl，会读取 Windows 系统代理。`QwenModels` 和生成的 WAV 属于本机运行数据，不提交到 Git。正常启动应用不会自动调用准备脚本或下载模型。
+The two model files total about 1.48 GB. The script pins the official repository revision to `ca27d74bc954b73dadab5b71ca265d87fc861a7c`. The Chelsie sample is 347,564 bytes, 24 kHz, mono, 16-bit PCM, and 7.24 seconds long, with SHA256 `e2461d0e0fc2bf1e083ea7af40c3b6849e5912b2744162cab6e151c366097b53`. Verified files are not downloaded again. Interrupted downloads retain a `.partial` file for resuming. The script supports an existing aria2c installation or Windows curl and reads the Windows system proxy. `QwenModels` and generated WAV files are local runtime data and are not committed to Git. Starting the app normally does not automatically run the setup script or download models.
 
-只验证已有文件，或执行短中文合成检查：
+Verify existing files only, or run a short Chinese synthesis check:
 
 ```powershell
 .\setup_qwen3_tts.ps1 -VerifyOnly
 .\setup_qwen3_tts.ps1 -VerifyOnly -Test
 ```
 
-`-VerifyOnly` 同时检查两个模型文件和 Chelsie 样音；缺少样音或校验失败会报错。`-Test` 将“你好，这是本地语音测试。”写入不带 BOM 的 UTF-8 文本文件，使用 CPU、固定 `--tts-speaker-file` 和 `--seed 42` 合成，并在 `QwenTemp` 生成一个唯一命名的 WAV；它不会播放音频、录制麦克风或重启已经运行的 Omni 服务。`-ModelDir` 或环境变量 `QWEN3_TTS_MODEL_DIR` 可以改变模型目录，`-TestText` 可以改变测试文字。Chelsie 样音始终保存在应用目录下上述 `voices\Chelsie.wav`，不随模型目录环境配置改变。
+`-VerifyOnly` checks both model files and the Chelsie sample; a missing sample or a failed verification produces an error. `-Test` writes a Chinese sentence meaning "Hello, this is a local voice test." to a UTF-8 text file without a BOM, synthesizes it on the CPU with the fixed `--tts-speaker-file` and `--seed 42`, and creates a uniquely named WAV in `QwenTemp`. It does not play audio, record the microphone, or restart an already running Omni service. `-ModelDir` or the `QWEN3_TTS_MODEL_DIR` environment variable can change the model directory, and `-TestText` can change the test text. The Chelsie sample always remains at the `voices\Chelsie.wav` path shown above under the app directory; changes to the model directory environment configuration do not move it.
 
-默认使用 CPU，避免和 Omni 争用 GPU 显存。可覆盖的路径参数：
+The default is CPU synthesis to avoid competing with Omni for GPU memory. Available path and runtime overrides:
 
 ```powershell
 $env:QWEN3_TTS_MODEL_DIR = "D:\download\Qwen\_local\QwenModels\Qwen3-TTS-12Hz-1.7B-Base-GGUF"
@@ -219,14 +219,14 @@ $env:QWEN3_TTS_TIMEOUT_SECONDS = "600"
 $env:QWEN3_TTS_MIN_FREE_RAM_MB = "4096"
 ```
 
-修改环境变量后需要重新启动 Flask 应用，已经运行的 Omni 8080 服务可以继续使用。`llama-tts.exe` 是独立可执行文件，本机 b10711 的 `llama.exe` 没有 `tts` 子命令。[上游 TTS 文档](https://github.com/ggml-org/llama.cpp/blob/master/tools/tts/README.md)展示的是 Base 模型和参考音频流程，不能据此承诺 CustomVoice／VoiceDesign 模式也已经接入。
+Restart the Flask app after changing environment variables; the already running Omni service on port 8080 can continue to be used. `llama-tts.exe` is a separate executable, and the local b10711 build of `llama.exe` has no `tts` subcommand. The [upstream TTS documentation](https://github.com/ggml-org/llama.cpp/blob/master/tools/tts/README.md) demonstrates the Base model and reference audio workflow; this does not establish that CustomVoice or VoiceDesign modes are integrated.
 
-Chelsie 样音是必需资产；应用缺少样音或校验失败时明确报错，不会省略参考条件生成随机音色，也不会自动切回 Web TTS。旧的 `QWEN3_TTS_SPEAKER_FILE` 自定义参考配置被忽略，所有分段都使用固定的官方 Chelsie 样音。`--seed 42` 固定采样随机数，但单独设置 seed 不能指定 Chelsie 音色；音色条件来自参考音频的说话人向量。当前 llama.cpp 路径使用该向量进行克隆，没有使用参考转写文本的完整 ICL 条件；[Qwen 官方说明](https://github.com/QwenLM/Qwen3-TTS#voice-clone)指出这种模式的克隆质量可能降低。语调和韵律仍会随文字变化，不能把参考克隆承诺为与 Omni 原生 Chelsie 完全相同的声音。
+The Chelsie sample is required. The app reports a clear error if it is missing or fails verification; it does not omit reference conditioning to generate a random voice or automatically switch back to Web TTS. The old `QWEN3_TTS_SPEAKER_FILE` custom reference setting is ignored, and all segments use the fixed official Chelsie sample. `--seed 42` fixes the sampling randomness, but a seed alone cannot select the Chelsie voice. Voice conditioning comes from the speaker embedding in the reference audio. The current llama.cpp path clones the voice using that embedding, without the full ICL conditioning that includes the reference transcript. [Qwen's official guidance](https://github.com/QwenLM/Qwen3-TTS#voice-clone) notes that this mode can reduce cloning quality. Intonation and prosody still vary with the text, so reference cloning does not guarantee a voice identical to Omni's native Chelsie.
 
-应用按标点和空格把长回答分段，含中文的段最多 24 个字符，其他段最多 80 个字符；每段由 CLI 单独合成，然后拼接为一个 WAV 返回。这样避免把整个长回答一次送入波形解码器，但长回答仍需要更长时间。`QWEN3_TTS_MAX_FRAMES` 默认 120，限制的是每段帧数，12 Hz 下约 10 秒；调得过小可能截断语音，调得过大会允许更高内存开销。总合成超时默认 600 秒。
+The app splits long answers at punctuation and spaces. Segments containing Chinese are limited to 24 characters; other segments are limited to 80 characters. Each segment is synthesized separately by the CLI, then concatenated into a single WAV response. This avoids sending the entire long answer to the waveform decoder at once, though long answers still take more time. `QWEN3_TTS_MAX_FRAMES` defaults to 120 and limits the number of frames per segment, about 10 seconds at 12 Hz. Setting it too low may truncate speech; setting it too high permits greater memory use. The total synthesis timeout defaults to 600 seconds.
 
-应用的 CPU 参数还关闭 mmproj、算子和 KV cache 的 GPU offload。`QWEN3_TTS_MIN_FREE_RAM_MB` 默认 4096，是内存保护策略的目标，不是硬性最低要求。Windows 上若 Omni 回答后可用内存不足，应用先回收该本地 llama.cpp 进程的工作集，再检查是否能启动 TTS；模型进程继续运行。问答与 TTS 共用推理锁，其他推理请求快速返回忙碌提示，状态接口仍可访问。
+The app's CPU settings also disable GPU offload for mmproj, operators, and the KV cache. `QWEN3_TTS_MIN_FREE_RAM_MB` defaults to 4096 as a target for the memory protection strategy, rather than a hard minimum requirement. On Windows, if available RAM is low after Omni answers, the app first trims the local llama.cpp process's working set, then checks whether TTS can start; the model process keeps running. Question answering and TTS share an inference lock. Other inference requests quickly return a busy response, while status endpoints remain accessible.
 
-“停止播报”或切换语音输出会停止前端播放并放弃本次语音结果；已经在服务器启动的合成会继续到结束或超时，期间新的推理请求会提示忙碌。播放结束后恢复 VAD，避免把合成声音当成用户录音。
+Selecting Stop speaking or changing the voice output stops browser playback and discards the current audio result. Synthesis that has already started on the server continues until completion or timeout, and new inference requests report busy during that time. VAD resumes after playback ends to avoid treating synthesized speech as a user recording.
 
-2026-10-01 用本机 b10711、固定 Chelsie 参考和 seed 42，经 Flask 测试客户端执行真实两段中文合成，返回 HTTP 200；拼接 WAV 为 24 kHz、单声道、16-bit PCM，长度 8.74 秒，含两次模型加载的墙钟耗时 21.17 秒。已验证两段共用参考路径并生成有效音频，该结果不代表与原生 Chelsie 的听感完全相同或长回答内存上限。应用串行处理 TTS，按上述限制保守分段。准备脚本的 `-Test` 使用 120 帧、固定 Chelsie 参考、seed 42，并关闭 mmproj、算子和 KV cache 的 GPU offload。
+On 2026-10-01, a real two-segment Chinese synthesis test using the local b10711 build, the fixed Chelsie reference, and seed 42 through Flask's test client returned HTTP 200. The concatenated WAV was 24 kHz, mono, 16-bit PCM, and 8.74 seconds long. Wall-clock time, including two model loads, was 21.17 seconds. The test confirmed that both segments shared the reference path and produced valid audio; it did not establish perceptual identity with native Chelsie or the memory limits for long answers. The app processes TTS serially and uses conservative segmentation under the limits above. The setup script's `-Test` uses 120 frames, the fixed Chelsie reference, and seed 42, with GPU offload disabled for mmproj, operators, and the KV cache.
